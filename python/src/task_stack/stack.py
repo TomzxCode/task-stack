@@ -6,8 +6,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-STACK_FILE = Path.home() / ".task-stack.json"
-_TMP = STACK_FILE.with_suffix(".json.tmp")
+import yaml
+
+STACK_FILE = Path.home() / ".task-stack.yaml"
+_TMP = STACK_FILE.with_suffix(".yaml.tmp")
+_LEGACY_JSON_FILE = Path.home() / ".task-stack.json"
 
 
 @dataclass
@@ -30,18 +33,59 @@ class Task:
         )
 
 
+def _parse_tasks(data: object) -> list[Task]:
+    if not isinstance(data, list):
+        return []
+    out: list[Task] = []
+    for item in data:
+        if isinstance(item, dict):
+            try:
+                out.append(Task.from_dict(item))
+            except Exception:
+                continue
+    return out
+
+
+def _migrate_legacy_json() -> list[Task] | None:
+    """Read the old JSON file (if any) and write it back as YAML. Returns the tasks."""
+    if not _LEGACY_JSON_FILE.exists():
+        return None
+    try:
+        data = json.loads(_LEGACY_JSON_FILE.read_text())
+    except Exception:
+        return None
+    tasks = _parse_tasks(data)
+    try:
+        save(tasks)
+    except Exception:
+        return tasks
+    try:
+        _LEGACY_JSON_FILE.rename(_LEGACY_JSON_FILE.with_suffix(".json.bak"))
+    except OSError:
+        pass
+    return tasks
+
+
 def load() -> list[Task]:
     if not STACK_FILE.exists():
+        migrated = _migrate_legacy_json()
+        if migrated is not None:
+            return migrated
         return []
     try:
-        data = json.loads(STACK_FILE.read_text())
-        return [Task.from_dict(item) for item in data]
+        data = yaml.safe_load(STACK_FILE.read_text())
     except Exception:
         return []
+    return _parse_tasks(data)
 
 
 def save(tasks: list[Task]) -> None:
-    data = json.dumps([t.to_dict() for t in tasks], indent=2)
+    data = yaml.safe_dump(
+        [t.to_dict() for t in tasks],
+        sort_keys=False,
+        allow_unicode=True,
+        default_flow_style=False,
+    )
     _TMP.write_text(data)
     os.replace(_TMP, STACK_FILE)
 

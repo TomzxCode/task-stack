@@ -4,6 +4,7 @@ import tkinter as tk
 from datetime import datetime, timezone
 from typing import Callable
 
+from . import settings as cfg
 from . import stack as st
 
 
@@ -12,6 +13,9 @@ _FONT_NORMAL = ("TkDefaultFont", 11)
 _COLOR_SELECTED_BG = "#d0e4ff"
 _COLOR_BG = "#ffffff"
 _ROW_HEIGHT = 28
+_DEFAULT_WIDTH = 480
+_DEFAULT_HEIGHT = 360
+_GEOMETRY_SAVE_DEBOUNCE_MS = 400
 
 
 class StackWindow:
@@ -24,13 +28,20 @@ class StackWindow:
         self._drag_y0: int = 0
 
         root.title("Task Stack")
-        root.resizable(False, False)
+        root.resizable(True, True)
+        root.minsize(320, 160)
         root.protocol("WM_DELETE_WINDOW", self.hide)
         root.attributes("-topmost", True)
 
+        self._settings = cfg.load()
+        self._save_after_id: str | None = None
+
         self._build_ui()
+        self._apply_initial_geometry()
         self.refresh()
         self._canvas.focus_set()
+
+        root.bind("<Configure>", self._on_root_configure)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -43,15 +54,26 @@ class StackWindow:
         top = tk.Frame(self.root, bg="#f0f0f0")
         top.pack(fill=tk.X, **pad)
 
-        self._entry = tk.Entry(top, font=_FONT_NORMAL, relief=tk.FLAT, bg="white",
-                               highlightthickness=1, highlightbackground="#aaa")
+        self._entry = tk.Entry(
+            top,
+            font=_FONT_NORMAL,
+            relief=tk.FLAT,
+            bg="white",
+            fg="#111",
+            insertbackground="#111",
+            disabledforeground="#888",
+            readonlybackground="white",
+            highlightthickness=1,
+            highlightbackground="#aaa",
+            highlightcolor="#4a90e2",
+        )
         self._entry.pack(fill=tk.X, ipady=4)
         self._entry.bind("<Return>", self._on_enter)
         self._entry.bind("<Escape>", lambda _: self._canvas.focus_set())
 
         self._canvas = tk.Canvas(self.root, bg=_COLOR_BG, highlightthickness=0,
                                  width=460, height=_ROW_HEIGHT)
-        self._canvas.pack(fill=tk.BOTH, padx=8, pady=(0, 8))
+        self._canvas.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
         self._canvas.configure(takefocus=True)
         self._canvas.bind("<ButtonPress-1>", self._drag_press)
@@ -59,6 +81,7 @@ class StackWindow:
         self._canvas.bind("<ButtonRelease-1>", self._drag_release)
         self._canvas.bind("<Key>", self._on_key)
         self._canvas.bind("<Escape>", lambda _: self.hide())
+        self._canvas.bind("<Configure>", lambda _e: self._redraw())
 
     # ------------------------------------------------------------------
     # Public API
@@ -72,7 +95,61 @@ class StackWindow:
         self._canvas.focus_set()
 
     def hide(self) -> None:
+        self._capture_geometry()
         self.root.withdraw()
+
+    # ------------------------------------------------------------------
+    # Geometry persistence
+    # ------------------------------------------------------------------
+
+    def _apply_initial_geometry(self) -> None:
+        geom = self._settings.window
+        if geom is not None:
+            self.root.geometry(geom.to_geometry_string())
+            return
+        self.root.update_idletasks()
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        x = max(0, (screen_w - _DEFAULT_WIDTH) // 2)
+        y = max(0, (screen_h - _DEFAULT_HEIGHT) // 3)
+        self.root.geometry(f"{_DEFAULT_WIDTH}x{_DEFAULT_HEIGHT}+{x}+{y}")
+
+    def _on_root_configure(self, event: tk.Event) -> None:
+        if event.widget is not self.root:
+            return
+        if self._save_after_id is not None:
+            try:
+                self.root.after_cancel(self._save_after_id)
+            except Exception:
+                pass
+        self._save_after_id = self.root.after(
+            _GEOMETRY_SAVE_DEBOUNCE_MS, self._capture_geometry
+        )
+
+    def _capture_geometry(self) -> None:
+        self._save_after_id = None
+        try:
+            if self.root.state() != "normal":
+                return
+            width = self.root.winfo_width()
+            height = self.root.winfo_height()
+            x = self.root.winfo_x()
+            y = self.root.winfo_y()
+        except tk.TclError:
+            return
+        if width <= 1 or height <= 1:
+            return
+        geom = cfg.WindowGeometry(width=width, height=height, x=x, y=y)
+        if (
+            self._settings.window is not None
+            and self._settings.window.width == geom.width
+            and self._settings.window.height == geom.height
+            and self._settings.window.x == geom.x
+            and self._settings.window.y == geom.y
+        ):
+            return
+        self._settings.window = geom
+        cfg.save(self._settings)
 
     def refresh(self, tasks: list[st.Task] | None = None) -> None:
         if tasks is not None:
@@ -89,10 +166,14 @@ class StackWindow:
     def _redraw(self) -> None:
         c = self._canvas
         c.delete("all")
-        count = len(self._tasks)
-        height = max(count, 1) * _ROW_HEIGHT
-        c.configure(height=height)
         now = datetime.now(tz=timezone.utc)
+
+        width = c.winfo_width()
+        if width <= 1:
+            width = int(c.cget("width"))
+        right_pad = 8
+        ts_x = width - right_pad
+        text_right = ts_x - 70  # leave room for timestamp column
 
         for i, task in enumerate(self._tasks):
             y0 = i * _ROW_HEIGHT
@@ -103,7 +184,7 @@ class StackWindow:
             else:
                 bg = _COLOR_BG
 
-            c.create_rectangle(0, y0, 460, y1, fill=bg, outline="", tags=f"row{i}")
+            c.create_rectangle(0, y0, width, y1, fill=bg, outline="", tags=f"row{i}")
 
             # drag handle
             for dy in (8, 13, 18):
@@ -119,17 +200,17 @@ class StackWindow:
             c.create_text(44, y0 + _ROW_HEIGHT // 2, text=indicator, anchor=tk.W,
                           font=font, fill="#333")
 
-            # task text (truncated)
+            text_width = max(40, text_right - 66)
             c.create_text(66, y0 + _ROW_HEIGHT // 2, text=task.text, anchor=tk.W,
-                          font=font, fill="#111", width=290)
+                          font=font, fill="#111", width=text_width)
 
-            # timestamp
             ts = st.format_timestamp(task.last_current, now)
-            c.create_text(452, y0 + _ROW_HEIGHT // 2, text=ts, anchor=tk.E,
+            c.create_text(ts_x, y0 + _ROW_HEIGHT // 2, text=ts, anchor=tk.E,
                           font=("TkFixedFont", 10), fill="#888")
 
         if not self._tasks:
-            c.create_text(230, _ROW_HEIGHT // 2, text="No tasks — type above and press Enter",
+            c.create_text(width // 2, _ROW_HEIGHT // 2,
+                          text="No tasks — type above and press Enter",
                           fill="#aaa", font=_FONT_NORMAL)
 
     # ------------------------------------------------------------------
