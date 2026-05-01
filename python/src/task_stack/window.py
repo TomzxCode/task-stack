@@ -9,7 +9,6 @@ from . import stack as st
 
 _FONT_CURRENT = ("TkDefaultFont", 11, "bold")
 _FONT_NORMAL = ("TkDefaultFont", 11)
-_COLOR_CURRENT_BG = "#e8f0fe"
 _COLOR_SELECTED_BG = "#d0e4ff"
 _COLOR_BG = "#ffffff"
 _ROW_HEIGHT = 28
@@ -27,11 +26,11 @@ class StackWindow:
         root.title("Task Stack")
         root.resizable(False, False)
         root.protocol("WM_DELETE_WINDOW", self.hide)
-        root.bind("<Escape>", lambda _: self.hide())
         root.attributes("-topmost", True)
 
         self._build_ui()
         self.refresh()
+        self._canvas.focus_set()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -48,15 +47,18 @@ class StackWindow:
                                highlightthickness=1, highlightbackground="#aaa")
         self._entry.pack(fill=tk.X, ipady=4)
         self._entry.bind("<Return>", self._on_enter)
+        self._entry.bind("<Escape>", lambda _: self._canvas.focus_set())
 
         self._canvas = tk.Canvas(self.root, bg=_COLOR_BG, highlightthickness=0,
                                  width=460, height=_ROW_HEIGHT)
         self._canvas.pack(fill=tk.BOTH, padx=8, pady=(0, 8))
 
+        self._canvas.configure(takefocus=True)
         self._canvas.bind("<ButtonPress-1>", self._drag_press)
         self._canvas.bind("<B1-Motion>", self._drag_motion)
         self._canvas.bind("<ButtonRelease-1>", self._drag_release)
-        self.root.bind("<Key>", self._on_key)
+        self._canvas.bind("<Key>", self._on_key)
+        self._canvas.bind("<Escape>", lambda _: self.hide())
 
     # ------------------------------------------------------------------
     # Public API
@@ -67,7 +69,7 @@ class StackWindow:
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
-        self._entry.focus_set()
+        self._canvas.focus_set()
 
     def hide(self) -> None:
         self.root.withdraw()
@@ -98,8 +100,6 @@ class StackWindow:
 
             if i == self._selected:
                 bg = _COLOR_SELECTED_BG
-            elif i == 0:
-                bg = _COLOR_CURRENT_BG
             else:
                 bg = _COLOR_BG
 
@@ -146,19 +146,48 @@ class StackWindow:
         self._selected = None
         self._redraw()
         self.on_stack_change()
+        self._canvas.focus_set()
 
     def _on_key(self, event: tk.Event) -> None:
+        if event.widget is self._entry:
+            return
+
         # Digit keys (main row and numpad) select a row
         if event.keysym.isdigit() or (event.keysym.startswith("KP_") and event.keysym[3:].isdigit()):
-            if event.widget is self._entry:
-                return
             digit = int(event.keysym[-1])
             if digit < len(self._tasks):
                 self._selected = digit
+                self._canvas.focus_set()
                 self._redraw()
             return
 
+        # Printable character: redirect to entry and let the user type
+        if event.char and event.char.isprintable():
+            self._entry.focus_set()
+            self._entry.insert(tk.END, event.char)
+            return
+
+        if event.keysym in ("Up", "Down"):
+            if self._selected is None:
+                self._selected = 0 if event.keysym == "Down" else len(self._tasks) - 1
+            else:
+                delta = -1 if event.keysym == "Up" else 1
+                self._selected = max(0, min(len(self._tasks) - 1, self._selected + delta))
+            self._canvas.focus_set()
+            self._redraw()
+            return
+
         if self._selected is None:
+            return
+
+        if event.keysym in ("Left", "Right"):
+            delta = -1 if event.keysym == "Left" else 1
+            new_idx = self._selected + delta
+            if 0 <= new_idx < len(self._tasks):
+                self._tasks = st.reorder(self._selected, new_idx)
+                self._selected = new_idx
+                self._redraw()
+                self.on_stack_change()
             return
 
         if event.keysym in ("slash", "KP_Divide"):
@@ -185,6 +214,7 @@ class StackWindow:
     def _drag_press(self, event: tk.Event) -> None:
         if not self._tasks:
             return
+        self._canvas.focus_set()
         self._drag_start = self._row_at(event.y)
         self._drag_y0 = event.y
 

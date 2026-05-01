@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import signal
 import threading
 import tkinter as tk
 
@@ -11,6 +12,16 @@ def main() -> None:
     root = tk.Tk()
     root.withdraw()  # hidden until opened
 
+    def _sigint(*_) -> None:
+        root.quit()
+
+    signal.signal(signal.SIGINT, _sigint)
+
+    def _poll_signals() -> None:
+        root.after(200, _poll_signals)
+
+    root.after(200, _poll_signals)
+
     coordinator: AppCoordinator | None = None
 
     def on_stack_change() -> None:
@@ -21,13 +32,14 @@ def main() -> None:
 
     coordinator = AppCoordinator(
         tk_after=root.after,
+        tk_quit=root.quit,
         window_show=win.show,
         window_refresh=win.refresh,
     )
 
     tray = TrayApp(
         on_open=coordinator.request_show,
-        on_quit=root.quit,
+        on_quit=coordinator.request_quit,
     )
     coordinator.set_tray(tray)
 

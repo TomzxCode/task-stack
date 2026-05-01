@@ -89,8 +89,9 @@ class HotkeyListener:
 class AppCoordinator:
     """Wires together the tray, hotkey listener, and tkinter window via a thread-safe queue."""
 
-    def __init__(self, tk_after: Callable, window_show: Callable, window_refresh: Callable) -> None:
+    def __init__(self, tk_after: Callable, tk_quit: Callable, window_show: Callable, window_refresh: Callable) -> None:
         self._tk_after = tk_after
+        self._tk_quit = tk_quit
         self._window_show = window_show
         self._window_refresh = window_refresh
         self._queue: queue.SimpleQueue = queue.SimpleQueue()
@@ -101,6 +102,10 @@ class AppCoordinator:
 
     def request_show(self) -> None:
         self._queue.put("show")
+        self._tk_after(0, self._drain)
+
+    def request_quit(self) -> None:
+        self._queue.put("quit")
         self._tk_after(0, self._drain)
 
     def notify_stack_changed(self) -> None:
@@ -114,3 +119,5 @@ class AppCoordinator:
             if msg == "show":
                 self._window_refresh()
                 self._window_show()
+            elif msg == "quit":
+                self._tk_quit()
