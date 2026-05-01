@@ -24,6 +24,7 @@ class StackWindow:
         self.on_stack_change = on_stack_change
         self._tasks: list[st.Task] = []
         self._selected: int | None = None
+        self._editing_index: int | None = None
         self._drag_start: int | None = None
         self._drag_y0: int = 0
 
@@ -69,7 +70,8 @@ class StackWindow:
         )
         self._entry.pack(fill=tk.X, ipady=4)
         self._entry.bind("<Return>", self._on_enter)
-        self._entry.bind("<Escape>", lambda _: self._canvas.focus_set())
+        self._entry.bind("<Shift-Return>", self._on_shift_enter)
+        self._entry.bind("<Escape>", self._on_entry_escape)
 
         self._canvas = tk.Canvas(self.root, bg=_COLOR_BG, highlightthickness=0,
                                  width=460, height=_ROW_HEIGHT)
@@ -157,6 +159,7 @@ class StackWindow:
         else:
             self._tasks = st.load()
         self._selected = None
+        self._cancel_edit()
         self._redraw()
 
     # ------------------------------------------------------------------
@@ -217,20 +220,72 @@ class StackWindow:
     # Input handling
     # ------------------------------------------------------------------
 
-    def _on_enter(self, _event: tk.Event) -> None:
+    def _submit_entry(self, *, as_next: bool) -> None:
         text = self._entry.get().strip()
+        if self._editing_index is not None:
+            idx = self._editing_index
+            if not text:
+                self._cancel_edit()
+                self._redraw()
+                return
+            tasks = st.update_text(idx, text)
+            self._entry.delete(0, tk.END)
+            self._editing_index = None
+            self._tasks = tasks
+            self._selected = idx if 0 <= idx < len(tasks) else None
+            self._redraw()
+            self.on_stack_change()
+            self._canvas.focus_set()
+            return
         if not text:
             return
         self._entry.delete(0, tk.END)
-        tasks = st.push(text)
+        tasks = st.push_next(text) if as_next else st.push(text)
         self._tasks = tasks
         self._selected = None
         self._redraw()
         self.on_stack_change()
         self._canvas.focus_set()
 
+    def _begin_edit(self, idx: int) -> None:
+        if not (0 <= idx < len(self._tasks)):
+            return
+        self._editing_index = idx
+        self._selected = idx
+        self._entry.delete(0, tk.END)
+        self._entry.insert(0, self._tasks[idx].text)
+        self._entry.focus_set()
+        self._entry.select_range(0, tk.END)
+        self._entry.icursor(tk.END)
+        self._redraw()
+
+    def _cancel_edit(self) -> None:
+        if self._editing_index is None:
+            return
+        self._editing_index = None
+        self._entry.delete(0, tk.END)
+
+    def _on_enter(self, _event: tk.Event) -> None:
+        self._submit_entry(as_next=False)
+
+    def _on_shift_enter(self, _event: tk.Event) -> str:
+        self._submit_entry(as_next=True)
+        return "break"
+
+    def _on_entry_escape(self, _event: tk.Event) -> str:
+        if self._editing_index is not None:
+            self._cancel_edit()
+            self._redraw()
+        self._canvas.focus_set()
+        return "break"
+
     def _on_key(self, event: tk.Event) -> None:
         if event.widget is self._entry:
+            return
+
+        if event.keysym in ("Return", "KP_Enter"):
+            if self._selected is not None:
+                self._begin_edit(self._selected)
             return
 
         # Digit keys (main row and numpad) select a row
@@ -244,6 +299,7 @@ class StackWindow:
 
         # Printable character: redirect to entry and let the user type
         if event.char and event.char.isprintable():
+            self._cancel_edit()
             self._entry.focus_set()
             self._entry.insert(tk.END, event.char)
             return
@@ -265,6 +321,7 @@ class StackWindow:
             delta = -1 if event.keysym == "Left" else 1
             new_idx = self._selected + delta
             if 0 <= new_idx < len(self._tasks):
+                self._cancel_edit()
                 self._tasks = st.reorder(self._selected, new_idx)
                 self._selected = new_idx
                 self._redraw()
@@ -272,6 +329,7 @@ class StackWindow:
             return
 
         if event.keysym in ("slash", "KP_Divide"):
+            self._cancel_edit()
             tasks = st.promote(self._selected)
             self._tasks = tasks
             self._selected = None
@@ -279,6 +337,7 @@ class StackWindow:
             self.on_stack_change()
 
         elif event.keysym in ("BackSpace", "Delete"):
+            self._cancel_edit()
             tasks = st.remove(self._selected)
             self._tasks = tasks
             self._selected = None
@@ -304,6 +363,7 @@ class StackWindow:
             return
         target = self._row_at(event.y)
         if target != self._drag_start:
+            self._cancel_edit()
             self._tasks = st.reorder(self._drag_start, target)
             self._drag_start = target
             self._redraw()
