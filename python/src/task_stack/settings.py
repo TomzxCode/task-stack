@@ -1,4 +1,4 @@
-"""Persisted UI settings (window geometry, etc.)."""
+"""Persisted UI settings (window geometry, hotkey)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,11 @@ import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-SETTINGS_FILE = Path.home() / ".task-stack.settings.json"
-_TMP = SETTINGS_FILE.with_suffix(".json.tmp")
+import yaml
+
+SETTINGS_FILE = Path.home() / ".task-stack.settings.yaml"
+_TMP = SETTINGS_FILE.with_suffix(".yaml.tmp")
+_LEGACY_JSON_FILE = Path.home() / ".task-stack.settings.json"
 
 
 @dataclass
@@ -62,18 +65,48 @@ class Settings:
         }
 
 
+def _migrate_legacy_json() -> Settings | None:
+    if not _LEGACY_JSON_FILE.exists():
+        return None
+    try:
+        data = json.loads(_LEGACY_JSON_FILE.read_text())
+    except Exception:
+        return None
+    settings = Settings.from_dict(data)
+    try:
+        save(settings)
+    except Exception:
+        return settings
+    try:
+        _LEGACY_JSON_FILE.rename(_LEGACY_JSON_FILE.with_suffix(".json.bak"))
+    except OSError:
+        pass
+    return settings
+
+
 def load() -> Settings:
     if not SETTINGS_FILE.exists():
+        migrated = _migrate_legacy_json()
+        if migrated is not None:
+            return migrated
         return Settings()
     try:
-        return Settings.from_dict(json.loads(SETTINGS_FILE.read_text()))
+        data = yaml.safe_load(SETTINGS_FILE.read_text())
     except Exception:
         return Settings()
+    return Settings.from_dict(data) if isinstance(data, dict) else Settings()
 
 
 def save(settings: Settings) -> None:
     try:
-        _TMP.write_text(json.dumps(settings.to_dict(), indent=2))
+        _TMP.write_text(
+            yaml.safe_dump(
+                settings.to_dict(),
+                sort_keys=False,
+                allow_unicode=True,
+                default_flow_style=False,
+            )
+        )
         os.replace(_TMP, SETTINGS_FILE)
     except OSError:
         pass

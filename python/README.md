@@ -101,20 +101,21 @@ The app stores everything in your home directory:
 | File | Purpose |
 | --- | --- |
 | `~/.task-stack.yaml` | Active stack and soft-deleted history (YAML list of tasks). |
-| `~/.task-stack.settings.json` | Window geometry and hotkey configuration. |
+| `~/.task-stack.settings.yaml` | Window geometry and hotkey configuration (YAML). |
 | `~/.task-stack.json.bak` | Backup of the legacy JSON store, written once on first migration. |
+| `~/.task-stack.settings.json.bak` | Backup of the legacy JSON settings file, written once on first migration. |
 
 ### Customize the hotkey
 
-Edit `~/.task-stack.settings.json` and set the `"hotkey"` field, then restart
+Edit `~/.task-stack.settings.yaml` and set the `hotkey` field, then restart
 the app. Examples:
 
-```json
-{ "hotkey": "ctrl+shift+t" }
-{ "hotkey": "alt+space" }
-{ "hotkey": "cmd+shift+space" }
-{ "hotkey": "ctrl+f1" }
-{ "hotkey": "alt+/" }
+```yaml
+hotkey: ctrl+shift+t
+# hotkey: alt+space
+# hotkey: cmd+shift+space
+# hotkey: ctrl+f1
+# hotkey: alt+/
 ```
 
 Tokens are joined with `+` and are case-insensitive:
