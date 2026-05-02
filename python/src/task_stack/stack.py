@@ -19,6 +19,7 @@ class Task:
     created_at: datetime | None = field(default=None)
     started_at: datetime | None = field(default=None)
     last_current: datetime | None = field(default=None)
+    duration: float = field(default=0.0)
     deleted_at: datetime | None = field(default=None)
 
     @property
@@ -33,6 +34,36 @@ class Task:
             self.started_at = now
         self.last_current = now
 
+    def end_current_stint(self, now: datetime | None = None) -> None:
+        """Accumulate the live stint into ``duration``.
+
+        Adds ``now - last_current`` to ``duration``. ``last_current`` is left
+        unchanged so it continues to record when the task was most recently
+        current.
+        """
+        if self.last_current is None:
+            return
+        if now is None:
+            now = datetime.now().astimezone()
+        elapsed = (now - self.last_current).total_seconds()
+        if elapsed > 0:
+            self.duration += elapsed
+
+    def live_duration(self, now: datetime | None = None) -> float:
+        """Return cumulative active seconds plus the live stint since ``last_current``.
+
+        Use this for the task at position 0 where ``last_current`` represents
+        the start of an in-progress stint not yet folded into ``duration``.
+        """
+        total = self.duration
+        if self.last_current is not None:
+            if now is None:
+                now = datetime.now().astimezone()
+            elapsed = (now - self.last_current).total_seconds()
+            if elapsed > 0:
+                total += elapsed
+        return total
+
     def to_dict(self) -> dict:
         d: dict = {
             "text": self.text,
@@ -42,6 +73,7 @@ class Task:
         if self.started_at is not None:
             d["started_at"] = self.started_at.isoformat()
         d["last_current"] = self.last_current.isoformat() if self.last_current else None
+        d["duration"] = round(self.duration, 3)
         if self.deleted_at is not None:
             d["deleted_at"] = self.deleted_at.isoformat()
         return d
@@ -51,11 +83,18 @@ class Task:
         def _parse(v: object) -> datetime | None:
             return datetime.fromisoformat(v) if isinstance(v, str) and v else None
 
+        raw_duration = d.get("duration")
+        try:
+            duration = float(raw_duration) if raw_duration is not None else 0.0
+        except (TypeError, ValueError):
+            duration = 0.0
+
         return Task(
             text=d["text"],
             created_at=_parse(d.get("created_at")),
             started_at=_parse(d.get("started_at")),
             last_current=_parse(d.get("last_current")),
+            duration=duration,
             deleted_at=_parse(d.get("deleted_at")),
         )
 
@@ -93,6 +132,34 @@ def _migrate_legacy_json() -> list[Task] | None:
     return tasks
 
 
+def _migrate_durations(tasks: list[Task]) -> bool:
+    """Backfill ``duration`` for legacy entries that lack it.
+
+    For non-row-0 (or deleted) tasks that have ``last_current`` and
+    ``started_at`` but ``duration == 0``, treat ``last_current - started_at``
+    as the cumulative active duration. ``last_current`` itself is preserved.
+
+    Returns True if any task was modified.
+    """
+    changed = False
+    active_idx = 0
+    for t in tasks:
+        is_row_zero_active = (not t.is_deleted) and active_idx == 0
+        if not t.is_deleted:
+            active_idx += 1
+        if is_row_zero_active:
+            continue
+        if (
+            t.duration == 0.0
+            and t.last_current is not None
+            and t.started_at is not None
+            and t.last_current > t.started_at
+        ):
+            t.duration = (t.last_current - t.started_at).total_seconds()
+            changed = True
+    return changed
+
+
 def _load_all() -> list[Task]:
     """Load every task from disk, including soft-deleted ones."""
     if not STACK_FILE.exists():
@@ -104,7 +171,13 @@ def _load_all() -> list[Task]:
         data = yaml.safe_load(STACK_FILE.read_text())
     except Exception:
         return []
-    return _parse_tasks(data)
+    tasks = _parse_tasks(data)
+    if _migrate_durations(tasks):
+        try:
+            _save_all(tasks)
+        except Exception:
+            pass
+    return tasks
 
 
 def _split(tasks: list[Task]) -> tuple[list[Task], list[Task]]:
@@ -151,6 +224,8 @@ def deleted() -> list[Task]:
 def push(text: str) -> list[Task]:
     now = datetime.now().astimezone()
     active, history = _split(_load_all())
+    if active:
+        active[0].end_current_stint(now)
     task = Task(text=text.strip(), created_at=now)
     task.mark_current(now)
     active.insert(0, task)
@@ -180,6 +255,7 @@ def pop() -> tuple[Task | None, list[Task]]:
     if not active:
         return None, []
     removed = active.pop(0)
+    removed.end_current_stint(now)
     removed.deleted_at = now
     history.append(removed)
     if active:
@@ -192,6 +268,10 @@ def reorder(from_idx: int, to_idx: int) -> list[Task]:
     active, history = _split(_load_all())
     if from_idx == to_idx or not (0 <= from_idx < len(active)) or not (0 <= to_idx < len(active)):
         return active
+    if from_idx == 0 and to_idx != 0:
+        active[0].end_current_stint(now)
+    elif to_idx == 0 and from_idx != 0:
+        active[0].end_current_stint(now)
     task = active.pop(from_idx)
     active.insert(to_idx, task)
     if to_idx == 0:
@@ -225,6 +305,8 @@ def remove(idx: int) -> list[Task]:
     if not (0 <= idx < len(active)):
         return active
     removed = active.pop(idx)
+    if idx == 0:
+        removed.end_current_stint(now)
     removed.deleted_at = now
     history.append(removed)
     if active and idx == 0:
@@ -253,3 +335,28 @@ def format_timestamp(dt: datetime | None, now: datetime | None = None) -> str:
     if dt.hour != now.hour:
         return dt.strftime("%H:%M")
     return dt.strftime("%M")
+
+
+def format_duration(seconds: float | None) -> str:
+    """Return a human-readable duration with two units of precision.
+
+    Examples: ``0m 45s``, ``2h 05m``, ``3d 04h``, ``2w 3d``.
+    """
+    if seconds is None:
+        return "—"
+    total = int(seconds)
+    if total < 0:
+        total = 0
+
+    minutes, sec = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    weeks, days = divmod(days, 7)
+
+    if weeks > 0:
+        return f"{weeks}w {days}d"
+    if days > 0:
+        return f"{days}d {hours:02d}h"
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m"
+    return f"{minutes}m {sec:02d}s"

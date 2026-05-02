@@ -16,6 +16,7 @@ _ROW_HEIGHT = 28
 _DEFAULT_WIDTH = 480
 _DEFAULT_HEIGHT = 360
 _GEOMETRY_SAVE_DEBOUNCE_MS = 400
+_DURATION_TICK_MS = 1_000
 
 
 class StackWindow:
@@ -36,6 +37,7 @@ class StackWindow:
 
         self._settings = cfg.load()
         self._save_after_id: str | None = None
+        self._tick_after_id: str | None = None
 
         self._build_ui()
         self._apply_initial_geometry()
@@ -43,6 +45,7 @@ class StackWindow:
         self._canvas.focus_set()
 
         root.bind("<Configure>", self._on_root_configure)
+        self._schedule_tick()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -128,6 +131,19 @@ class StackWindow:
             _GEOMETRY_SAVE_DEBOUNCE_MS, self._capture_geometry
         )
 
+    def _schedule_tick(self) -> None:
+        try:
+            self._tick_after_id = self.root.after(_DURATION_TICK_MS, self._on_tick)
+        except tk.TclError:
+            self._tick_after_id = None
+
+    def _on_tick(self) -> None:
+        self._tick_after_id = None
+        try:
+            self._redraw()
+        finally:
+            self._schedule_tick()
+
     def _capture_geometry(self) -> None:
         self._save_after_id = None
         try:
@@ -175,8 +191,12 @@ class StackWindow:
         if width <= 1:
             width = int(c.cget("width"))
         right_pad = 8
-        ts_x = width - right_pad
-        text_right = ts_x - 70  # leave room for timestamp column
+        dur_col_w = 60
+        ts_col_w = 70
+        gap = 8
+        dur_x = width - right_pad
+        ts_x = dur_x - dur_col_w - gap
+        text_right = ts_x - ts_col_w - gap
 
         for i, task in enumerate(self._tasks):
             y0 = i * _ROW_HEIGHT
@@ -199,7 +219,7 @@ class StackWindow:
                           font=font, fill="#666")
 
             # indicator
-            indicator = "●" if i == 0 else "○"
+            indicator = "🔥" if i == 0 else "💤"
             c.create_text(44, y0 + _ROW_HEIGHT // 2, text=indicator, anchor=tk.W,
                           font=font, fill="#333")
 
@@ -207,9 +227,19 @@ class StackWindow:
             c.create_text(66, y0 + _ROW_HEIGHT // 2, text=task.text, anchor=tk.W,
                           font=font, fill="#111", width=text_width)
 
-            ts = st.format_timestamp(task.last_current, now)
-            c.create_text(ts_x, y0 + _ROW_HEIGHT // 2, text=ts, anchor=tk.E,
-                          font=("TkFixedFont", 10), fill="#888")
+            if i == 0:
+                ts_text = st.format_timestamp(task.started_at, now)
+                dur_seconds = task.live_duration(now)
+                col_fill = "#444"
+            else:
+                ts_text = st.format_timestamp(task.last_current, now)
+                dur_seconds = task.duration
+                col_fill = "#888"
+            c.create_text(ts_x, y0 + _ROW_HEIGHT // 2, text=ts_text, anchor=tk.E,
+                          font=("TkFixedFont", 10), fill=col_fill)
+            c.create_text(dur_x, y0 + _ROW_HEIGHT // 2,
+                          text=st.format_duration(dur_seconds), anchor=tk.E,
+                          font=("TkFixedFont", 10), fill=col_fill)
 
         if not self._tasks:
             c.create_text(width // 2, _ROW_HEIGHT // 2,
