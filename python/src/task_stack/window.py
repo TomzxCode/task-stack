@@ -169,7 +169,7 @@ class StackWindow:
     def _redraw(self) -> None:
         c = self._canvas
         c.delete("all")
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now().astimezone()
 
         width = c.winfo_width()
         if width <= 1:

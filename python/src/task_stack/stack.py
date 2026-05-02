@@ -28,7 +28,7 @@ class Task:
     def mark_current(self, now: datetime | None = None) -> None:
         """Mark this task as the active one (position 0)."""
         if now is None:
-            now = datetime.now(tz=timezone.utc)
+            now = datetime.now().astimezone()
         if self.started_at is None:
             self.started_at = now
         self.last_current = now
@@ -149,7 +149,7 @@ def deleted() -> list[Task]:
 
 
 def push(text: str) -> list[Task]:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now().astimezone()
     active, history = _split(_load_all())
     task = Task(text=text.strip(), created_at=now)
     task.mark_current(now)
@@ -163,7 +163,7 @@ def push_next(text: str) -> list[Task]:
     If there is no current task, the new task is placed at position 0 and
     becomes current (same as ``push``).
     """
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now().astimezone()
     active, history = _split(_load_all())
     task = Task(text=text.strip(), created_at=now)
     if not active:
@@ -175,7 +175,7 @@ def push_next(text: str) -> list[Task]:
 
 
 def pop() -> tuple[Task | None, list[Task]]:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now().astimezone()
     active, history = _split(_load_all())
     if not active:
         return None, []
@@ -188,7 +188,7 @@ def pop() -> tuple[Task | None, list[Task]]:
 
 
 def reorder(from_idx: int, to_idx: int) -> list[Task]:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now().astimezone()
     active, history = _split(_load_all())
     if from_idx == to_idx or not (0 <= from_idx < len(active)) or not (0 <= to_idx < len(active)):
         return active
@@ -220,7 +220,7 @@ def update_text(idx: int, text: str) -> list[Task]:
 
 
 def remove(idx: int) -> list[Task]:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now().astimezone()
     active, history = _split(_load_all())
     if not (0 <= idx < len(active)):
         return active
@@ -236,12 +236,13 @@ def format_timestamp(dt: datetime | None, now: datetime | None = None) -> str:
     if dt is None:
         return "—"
     if now is None:
-        now = datetime.now(tz=timezone.utc)
-    # Normalize both to UTC-aware for comparison
+        now = datetime.now().astimezone()
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
+    dt = dt.astimezone()
+    now = now.astimezone()
 
     if dt.year != now.year:
         return dt.strftime("%Y-%m-%d %H:%M")
