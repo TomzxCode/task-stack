@@ -103,6 +103,12 @@ class StackWindow:
         self._capture_geometry()
         self.root.withdraw()
 
+    def is_visible(self) -> bool:
+        try:
+            return bool(self.root.winfo_viewable())
+        except tk.TclError:
+            return False
+
     # ------------------------------------------------------------------
     # Geometry persistence
     # ------------------------------------------------------------------

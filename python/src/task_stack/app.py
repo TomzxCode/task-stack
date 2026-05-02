@@ -167,11 +167,21 @@ class HotkeyListener:
 class AppCoordinator:
     """Wires together the tray, hotkey listener, and tkinter window via a thread-safe queue."""
 
-    def __init__(self, tk_after: Callable, tk_quit: Callable, window_show: Callable, window_refresh: Callable) -> None:
+    def __init__(
+        self,
+        tk_after: Callable,
+        tk_quit: Callable,
+        window_show: Callable,
+        window_hide: Callable,
+        window_refresh: Callable,
+        window_is_visible: Callable[[], bool],
+    ) -> None:
         self._tk_after = tk_after
         self._tk_quit = tk_quit
         self._window_show = window_show
+        self._window_hide = window_hide
         self._window_refresh = window_refresh
+        self._window_is_visible = window_is_visible
         self._queue: queue.SimpleQueue = queue.SimpleQueue()
         self._tray: TrayApp | None = None
 
@@ -180,6 +190,10 @@ class AppCoordinator:
 
     def request_show(self) -> None:
         self._queue.put("show")
+        self._tk_after(0, self._drain)
+
+    def request_toggle(self) -> None:
+        self._queue.put("toggle")
         self._tk_after(0, self._drain)
 
     def request_quit(self) -> None:
@@ -197,5 +211,11 @@ class AppCoordinator:
             if msg == "show":
                 self._window_refresh()
                 self._window_show()
+            elif msg == "toggle":
+                if self._window_is_visible():
+                    self._window_hide()
+                else:
+                    self._window_refresh()
+                    self._window_show()
             elif msg == "quit":
                 self._tk_quit()

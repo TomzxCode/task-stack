@@ -52,7 +52,9 @@ def main() -> None:
         tk_after=root.after,
         tk_quit=root.quit,
         window_show=win.show,
+        window_hide=win.hide,
         window_refresh=win.refresh,
+        window_is_visible=win.is_visible,
     )
 
     settings = cfg.load()
@@ -79,7 +81,7 @@ def main() -> None:
             "then quit and relaunch task-stack.\n"
         )
 
-    hotkey = HotkeyListener(callback=coordinator.request_show, spec=hotkey_spec)
+    hotkey = HotkeyListener(callback=coordinator.request_toggle, spec=hotkey_spec)
     hotkey.start()
 
     if sys.platform == "darwin":
