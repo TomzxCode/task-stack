@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tkinter as tk
+import tkinter.font as tkFont
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Callable
@@ -85,6 +86,10 @@ class StackWindow:
         fs = self._settings.font_size
         self._font_normal = (ff, fs)
         self._font_current = (ff, fs, "bold")
+        f = tkFont.Font(family=ff, size=fs)
+        # measure widest representative strings + small padding
+        self._dur_col_w = f.measure("00h 00m") + 8
+        self._ts_col_w = f.measure("00m ago") + 8
 
     # ------------------------------------------------------------------
     # UI construction
@@ -238,12 +243,10 @@ class StackWindow:
         if width <= 1:
             width = int(c.cget("width"))
         right_pad = 8
-        dur_col_w = 60
-        ts_col_w = 70
         gap = 8
         dur_x = width - right_pad
-        ts_x = dur_x - dur_col_w - gap
-        text_right = ts_x - ts_col_w - gap
+        ts_x = dur_x - self._dur_col_w - gap
+        text_right = ts_x - self._ts_col_w - gap
 
         for i, task in enumerate(self._tasks):
             y0 = i * _ROW_HEIGHT
@@ -283,10 +286,10 @@ class StackWindow:
                 dur_seconds = task.duration
                 col_fill = "#888"
             c.create_text(ts_x, y0 + _ROW_HEIGHT // 2, text=ts_text, anchor=tk.E,
-                          font=("TkFixedFont", 10), fill=col_fill)
+                          font=self._font_normal, fill=col_fill)
             c.create_text(dur_x, y0 + _ROW_HEIGHT // 2,
                           text=st.format_duration(dur_seconds), anchor=tk.E,
-                          font=("TkFixedFont", 10), fill=col_fill)
+                          font=self._font_normal, fill=col_fill)
 
         if not self._tasks:
             c.create_text(width // 2, _ROW_HEIGHT // 2,
