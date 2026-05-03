@@ -469,6 +469,7 @@ class StackWindow:
             x = (self.root.winfo_screenwidth() - win.winfo_width()) // 2
             y = (self.root.winfo_screenheight() - win.winfo_height()) // 3
         win.geometry(f"+{x}+{y}")
+        win.focus_force()
 
     # ------------------------------------------------------------------
     # Drag and drop
