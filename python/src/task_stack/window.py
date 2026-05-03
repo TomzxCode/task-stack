@@ -30,13 +30,21 @@ _DURATION_TICK_MS = 1_000
 def _emoji_image(emoji: str, size: int = 18) -> ImageTk.PhotoImage:
     if emoji in _EMOJI_CACHE:
         return _EMOJI_CACHE[emoji]
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
     try:
         font = ImageFont.truetype("seguiemj.ttf", size)
     except OSError:
         font = ImageFont.load_default()
-    draw.text((0, 0), emoji, font=font, embedded_color=True)
+    # Render into an oversized canvas to avoid clipping, then crop to actual bounds
+    canvas_size = size * 3
+    img = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.text((size // 2, size // 2), emoji, font=font, embedded_color=True)
+    bbox = img.getbbox()
+    if bbox:
+        img = img.crop(bbox)
+        img = img.resize((size, size), Image.LANCZOS)
+    else:
+        img = img.crop((0, 0, size, size))
     photo = ImageTk.PhotoImage(img)
     _EMOJI_CACHE[emoji] = photo
     return photo
