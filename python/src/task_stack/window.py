@@ -234,6 +234,7 @@ class StackWindow:
         # measure widest representative strings + small padding
         self._dur_col_w = f.measure("00h 00m") + 8
         self._ts_col_w = f.measure("00m ago") + 8
+        self._lc_col_w = f.measure("00m ago") + 8
 
     # ------------------------------------------------------------------
     # UI construction
@@ -479,7 +480,8 @@ class StackWindow:
         right_pad = 8
         gap = 8
         dur_x = width - right_pad
-        ts_x = dur_x - self._dur_col_w - gap
+        lc_x = dur_x - self._dur_col_w - gap
+        ts_x = lc_x - self._lc_col_w - gap
         text_right = ts_x - self._ts_col_w - gap
 
         for i, task in enumerate(self._tasks):
@@ -523,13 +525,21 @@ class StackWindow:
                 dur_seconds = task.live_duration(now)
                 col_fill = t.fg_dim
             else:
-                ts_text = st.format_timestamp(task.last_current, now)
+                ts_text = st.format_timestamp(task.started_at, now)
                 dur_seconds = task.duration
                 col_fill = t.fg_muted
             c.create_text(
                 ts_x,
                 y0 + _ROW_HEIGHT // 2,
                 text=ts_text,
+                anchor=tk.E,
+                font=self._font_normal,
+                fill=col_fill,
+            )
+            c.create_text(
+                lc_x,
+                y0 + _ROW_HEIGHT // 2,
+                text=st.format_timestamp(task.last_current, now),
                 anchor=tk.E,
                 font=self._font_normal,
                 fill=col_fill,
