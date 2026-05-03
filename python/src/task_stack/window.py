@@ -4,12 +4,15 @@ import tkinter as tk
 from datetime import datetime, timezone
 from typing import Callable
 
+from PIL import Image, ImageDraw, ImageFont, ImageTk
+
 from . import settings as cfg
 from . import stack as st
 
 
 _FONT_CURRENT = ("TkDefaultFont", 11, "bold")
 _FONT_NORMAL = ("TkDefaultFont", 11)
+_EMOJI_CACHE: dict[str, ImageTk.PhotoImage] = {}
 _COLOR_SELECTED_BG = "#d0e4ff"
 _COLOR_BG = "#ffffff"
 _ROW_HEIGHT = 28
@@ -17,6 +20,21 @@ _DEFAULT_WIDTH = 480
 _DEFAULT_HEIGHT = 360
 _GEOMETRY_SAVE_DEBOUNCE_MS = 400
 _DURATION_TICK_MS = 1_000
+
+
+def _emoji_image(emoji: str, size: int = 18) -> ImageTk.PhotoImage:
+    if emoji in _EMOJI_CACHE:
+        return _EMOJI_CACHE[emoji]
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("seguiemj.ttf", size)
+    except OSError:
+        font = ImageFont.load_default()
+    draw.text((0, 0), emoji, font=font, embedded_color=True)
+    photo = ImageTk.PhotoImage(img)
+    _EMOJI_CACHE[emoji] = photo
+    return photo
 
 
 class StackWindow:
@@ -227,10 +245,10 @@ class StackWindow:
             c.create_text(26, y0 + _ROW_HEIGHT // 2, text=str(i), anchor=tk.W,
                           font=font, fill="#666")
 
-            # indicator
+            # indicator (rendered via Pillow for color emoji support)
             indicator = "🔥" if i == 0 else "💤"
-            c.create_text(44, y0 + _ROW_HEIGHT // 2, text=indicator, anchor=tk.W,
-                          font=font, fill="#333")
+            img = _emoji_image(indicator)
+            c.create_image(44, y0 + _ROW_HEIGHT // 2, image=img, anchor=tk.W)
 
             text_width = max(40, text_right - 66)
             c.create_text(66, y0 + _ROW_HEIGHT // 2, text=task.text, anchor=tk.W,
