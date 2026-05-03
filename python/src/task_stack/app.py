@@ -127,9 +127,7 @@ class HotkeyListener:
         self._listener.daemon = True
         self._listener.start()
         if os.environ.get("TASK_STACK_DEBUG_HOTKEY"):
-            sys.stderr.write(
-                f"[task-stack] hotkey listener registered for {self._spec.pretty}\n"
-            )
+            sys.stderr.write(f"[task-stack] hotkey listener registered for {self._spec.pretty}\n")
             sys.stderr.flush()
 
     def stop(self) -> None:

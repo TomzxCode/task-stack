@@ -30,7 +30,7 @@ class WindowGeometry:
                 x=int(d["x"]),
                 y=int(d["y"]),
             )
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             return None
 
     def to_geometry_string(self) -> str:
@@ -61,7 +61,7 @@ class IconThreshold:
                 if len(hex_str) == 6:
                     r, g, b = int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16)
                     return IconThreshold(min_count=mc, color=(r, g, b))
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             pass
         return None
 
@@ -72,6 +72,7 @@ class IconThreshold:
 
 def _default_icon_thresholds() -> list[IconThreshold]:
     from .icon import DEFAULT_THRESHOLDS
+
     return [IconThreshold(min_count=mc, color=rgb) for mc, rgb in DEFAULT_THRESHOLDS]
 
 
@@ -106,7 +107,9 @@ class Settings:
             window=WindowGeometry.from_dict(win) if isinstance(win, dict) else None,
             hotkey=hk if isinstance(hk, str) and hk.strip() else DEFAULT_HOTKEY,
             font_family=ff if isinstance(ff, str) and ff.strip() else DEFAULT_FONT_FAMILY,
-            font_size=int(fs) if isinstance(fs, (int, float)) and 6 <= int(fs) <= 72 else DEFAULT_FONT_SIZE,
+            font_size=int(fs)
+            if isinstance(fs, (int, float)) and 6 <= int(fs) <= 72
+            else DEFAULT_FONT_SIZE,
             icon_thresholds=icon_thresholds,
         )
 
@@ -116,7 +119,9 @@ class Settings:
             "hotkey": self.hotkey,
             "font_family": self.font_family,
             "font_size": self.font_size,
-            "icon_thresholds": [t.to_dict() for t in self.icon_thresholds] if self.icon_thresholds else None,
+            "icon_thresholds": [t.to_dict() for t in self.icon_thresholds]
+            if self.icon_thresholds
+            else None,
         }
 
 

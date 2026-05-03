@@ -3,14 +3,18 @@ from __future__ import annotations
 from PIL import Image, ImageDraw, ImageFont
 
 _SIZE = 64
+
+
 def _fg_for(bg: tuple[int, int, int]) -> tuple[int, int, int]:
     # W3C relative luminance (WCAG 2.x)
     def channel(c: int) -> float:
         s = c / 255
         return s / 12.92 if s <= 0.04045 else ((s + 0.055) / 1.055) ** 2.4
+
     r, g, b = bg
     L = 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
     return (0, 0, 0) if L > 0.179 else (255, 255, 255)
+
 
 _FONT_CANDIDATES = [
     "C:/Windows/Fonts/arialbd.ttf",
@@ -22,9 +26,9 @@ _FONT_CANDIDATES = [
 # Default thresholds: list of (min_count, rgb), sorted descending.
 # First entry where count >= min_count wins. count==0 always uses grey.
 DEFAULT_THRESHOLDS: list[tuple[int, tuple[int, int, int]]] = [
-    (11, (200, 50, 50)),    # red
-    (6,  (220, 180, 0)),    # yellow
-    (1,  (70, 130, 180)),   # blue
+    (11, (200, 50, 50)),  # red
+    (6, (220, 180, 0)),  # yellow
+    (1, (70, 130, 180)),  # blue
 ]
 _BG_EMPTY = (120, 120, 120)
 

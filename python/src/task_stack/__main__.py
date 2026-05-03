@@ -8,13 +8,13 @@ from .tcl_tk_env import ensure_tcl_tk_env
 
 ensure_tcl_tk_env()
 
-import tkinter as tk
+import tkinter as tk  # noqa: E402
 
-from . import hotkey as hk
-from . import settings as cfg
-from .app import AppCoordinator, HotkeyListener, TrayApp
-from .macos_permissions import ensure_hotkey_permissions
-from .window import StackWindow
+from . import hotkey as hk  # noqa: E402
+from . import settings as cfg  # noqa: E402
+from .app import AppCoordinator, HotkeyListener, TrayApp  # noqa: E402
+from .macos_permissions import ensure_hotkey_permissions  # noqa: E402
+from .window import StackWindow  # noqa: E402
 
 
 def main() -> None:
@@ -23,8 +23,8 @@ def main() -> None:
     except tk.TclError as e:
         if sys.platform == "darwin" and "init.tcl" in str(e):
             sys.stderr.write(
-                "task-stack: Tkinter could not load Tcl/Tk. On macOS with uv-managed Python, install Tcl/Tk:\n"
-                "  brew install tcl-tk\n"
+                "task-stack: Tkinter could not load Tcl/Tk. On macOS with uv-managed Python,\n"
+                "install Tcl/Tk:  brew install tcl-tk\n"
                 "Then run again. Paths are set automatically when Homebrew's tcl-tk is present.\n"
             )
         raise

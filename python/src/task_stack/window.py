@@ -5,7 +5,7 @@ import threading
 import tkinter as tk
 import tkinter.font as tkFont
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Callable
 
@@ -86,6 +86,7 @@ def _os_prefers_dark() -> bool:
     if platform.system() == "Windows":
         try:
             import winreg
+
             key = winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER,
                 r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
@@ -98,9 +99,11 @@ def _os_prefers_dark() -> bool:
     if platform.system() == "Darwin":
         try:
             import subprocess
+
             result = subprocess.run(
                 ["defaults", "read", "-g", "AppleInterfaceStyle"],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             return result.stdout.strip().lower() == "dark"
         except Exception:
@@ -126,10 +129,12 @@ def _watch_windows_theme(callback: Callable[[], None], stop: threading.Event) ->
         )
         # Create a manual-reset event so we can also wake on stop
         stop_event = kernel32.CreateEventW(None, True, False, None)
+
         # Wire the threading.Event to the Win32 event via a helper thread
         def _set_stop() -> None:
             stop.wait()
             kernel32.SetEvent(stop_event)
+
         threading.Thread(target=_set_stop, daemon=True).start()
 
         reg_event = kernel32.CreateEventW(None, True, False, None)
@@ -163,15 +168,16 @@ _DURATION_TICK_MS = 1_000
 def _emoji_image(emoji: str, size: int = 18) -> ImageTk.PhotoImage:
     if emoji in _EMOJI_CACHE:
         return _EMOJI_CACHE[emoji]
+    scale = 4
+    render_size = size * scale
     try:
-        font = ImageFont.truetype("seguiemj.ttf", size)
+        font = ImageFont.truetype("seguiemj.ttf", render_size)
     except OSError:
         font = ImageFont.load_default()
-    # Render into an oversized canvas to avoid clipping, then crop to actual bounds
-    canvas_size = size * 3
+    canvas_size = render_size * 3
     img = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    draw.text((size // 2, size // 2), emoji, font=font, embedded_color=True)
+    draw.text((render_size // 2, render_size // 2), emoji, font=font, embedded_color=True)
     bbox = img.getbbox()
     if bbox:
         img = img.crop(bbox)
@@ -189,6 +195,7 @@ class StackWindow:
         self.on_stack_change = on_stack_change
         self._tasks: list[st.Task] = []
         self._selected: int | None = None
+        self._desc_shown_for: int | None = None
         self._editing_index: int | None = None
         self._drag_start: int | None = None
         self._drag_y0: int = 0
@@ -260,9 +267,10 @@ class StackWindow:
         self._entry.bind("<End>", self._on_entry_end)
         self._entry.bind("<Escape>", self._on_entry_escape)
 
-        self._canvas = tk.Canvas(self.root, bg=t.bg, highlightthickness=0,
-                                 width=460, height=_ROW_HEIGHT)
-        self._canvas.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        self._canvas = tk.Canvas(
+            self.root, bg=t.bg, highlightthickness=0, width=460, height=_ROW_HEIGHT
+        )
+        self._canvas.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 0))
 
         self._canvas.configure(takefocus=True)
         self._canvas.bind("<ButtonPress-1>", self._drag_press)
@@ -271,6 +279,30 @@ class StackWindow:
         self._canvas.bind("<Key>", self._on_key)
         self._canvas.bind("<Escape>", lambda _: self.hide())
         self._canvas.bind("<Configure>", lambda _e: self._redraw())
+
+        self._desc_frame = tk.Frame(self.root, bg=t.bg_frame)
+        self._desc_frame.pack(fill=tk.X, padx=8, pady=(4, 8))
+
+        self._desc_text = tk.Text(
+            self._desc_frame,
+            font=self._font_normal,
+            relief=tk.FLAT,
+            bg=t.entry_bg,
+            fg=t.entry_fg,
+            insertbackground=t.entry_cursor,
+            highlightthickness=1,
+            highlightbackground=t.entry_highlight_bg,
+            highlightcolor=t.entry_highlight_active,
+            height=4,
+            wrap=tk.WORD,
+            undo=True,
+        )
+        self._desc_text.pack(fill=tk.X)
+        self._desc_text.bind("<FocusOut>", self._on_desc_focus_out)
+        self._desc_text.bind("<FocusIn>", self._on_desc_focus_in)
+        self._desc_text.bind("<Escape>", self._on_desc_escape)
+        self._desc_placeholder_active = False
+        self._desc_frame.pack_forget()
 
     # ------------------------------------------------------------------
     # Public API
@@ -317,9 +349,7 @@ class StackWindow:
                 self.root.after_cancel(self._save_after_id)
             except Exception:
                 pass
-        self._save_after_id = self.root.after(
-            _GEOMETRY_SAVE_DEBOUNCE_MS, self._capture_geometry
-        )
+        self._save_after_id = self.root.after(_GEOMETRY_SAVE_DEBOUNCE_MS, self._capture_geometry)
 
     def _schedule_tick(self) -> None:
         try:
@@ -388,6 +418,14 @@ class StackWindow:
             highlightcolor=t.entry_highlight_active,
         )
         self._canvas.configure(bg=t.bg)
+        self._desc_frame.configure(bg=t.bg_frame)
+        self._desc_text.configure(
+            bg=t.entry_bg,
+            fg=t.entry_fg,
+            insertbackground=t.entry_cursor,
+            highlightbackground=t.entry_highlight_bg,
+            highlightcolor=t.entry_highlight_active,
+        )
         self._redraw()
 
     def _capture_geometry(self) -> None:
@@ -421,6 +459,7 @@ class StackWindow:
         else:
             self._tasks = st.load()
         self._selected = None
+        self._desc_shown_for = None
         self._cancel_edit()
         self._redraw()
 
@@ -454,16 +493,30 @@ class StackWindow:
                 c.create_line(8, y0 + dy, 18, y0 + dy, fill=t.drag_handle, width=1.5)
 
             font = self._font_current if i == 0 else self._font_normal
-            c.create_text(26, y0 + _ROW_HEIGHT // 2, text=str(i), anchor=tk.W,
-                          font=font, fill=t.fg_muted)
+            c.create_text(
+                26, y0 + _ROW_HEIGHT // 2, text=str(i), anchor=tk.W, font=font, fill=t.fg_muted
+            )
 
             indicator = "🔥" if i == 0 else "💤"
             img = _emoji_image(indicator)
             c.create_image(44, y0 + _ROW_HEIGHT // 2, image=img, anchor=tk.W)
 
-            text_width = max(40, text_right - 66)
-            c.create_text(66, y0 + _ROW_HEIGHT // 2, text=task.text, anchor=tk.W,
-                          font=font, fill=t.fg, width=text_width)
+            if task.description:
+                img_note = _emoji_image("📝")
+                c.create_image(64, y0 + _ROW_HEIGHT // 2, image=img_note, anchor=tk.W)
+                text_x = 86
+            else:
+                text_x = 66
+            text_width = max(40, text_right - text_x)
+            c.create_text(
+                text_x,
+                y0 + _ROW_HEIGHT // 2,
+                text=task.text,
+                anchor=tk.W,
+                font=font,
+                fill=t.fg,
+                width=text_width,
+            )
 
             if i == 0:
                 ts_text = st.format_timestamp(task.started_at, now)
@@ -473,16 +526,36 @@ class StackWindow:
                 ts_text = st.format_timestamp(task.last_current, now)
                 dur_seconds = task.duration
                 col_fill = t.fg_muted
-            c.create_text(ts_x, y0 + _ROW_HEIGHT // 2, text=ts_text, anchor=tk.E,
-                          font=self._font_normal, fill=col_fill)
-            c.create_text(dur_x, y0 + _ROW_HEIGHT // 2,
-                          text=st.format_duration(dur_seconds), anchor=tk.E,
-                          font=self._font_normal, fill=col_fill)
+            c.create_text(
+                ts_x,
+                y0 + _ROW_HEIGHT // 2,
+                text=ts_text,
+                anchor=tk.E,
+                font=self._font_normal,
+                fill=col_fill,
+            )
+            c.create_text(
+                dur_x,
+                y0 + _ROW_HEIGHT // 2,
+                text=st.format_duration(dur_seconds),
+                anchor=tk.E,
+                font=self._font_normal,
+                fill=col_fill,
+            )
 
         if not self._tasks:
-            c.create_text(width // 2, _ROW_HEIGHT // 2,
-                          text="No tasks — type above and press Enter",
-                          fill=t.fg_muted, font=self._font_normal)
+            c.create_text(
+                width // 2,
+                _ROW_HEIGHT // 2,
+                text="No tasks — type above and press Enter",
+                fill=t.fg_muted,
+                font=self._font_normal,
+            )
+
+        if self._selected is not None and 0 <= self._selected < len(self._tasks):
+            self._show_desc_panel(self._selected)
+        else:
+            self._hide_desc_panel()
 
     # ------------------------------------------------------------------
     # Input handling
@@ -538,6 +611,53 @@ class StackWindow:
         self._editing_index = None
         self._entry.delete(0, tk.END)
 
+    def _show_desc_panel(self, idx: int) -> None:
+        if self._desc_shown_for == idx:
+            return
+        self._desc_shown_for = idx
+        task = self._tasks[idx]
+        t = self._theme
+        self._desc_text.configure(state=tk.NORMAL)
+        self._desc_text.delete("1.0", tk.END)
+        if task.description:
+            self._desc_text.configure(fg=t.entry_fg)
+            self._desc_text.insert("1.0", task.description)
+            self._desc_placeholder_active = False
+        else:
+            self._desc_text.configure(fg=t.fg_muted)
+            self._desc_text.insert("1.0", "Add a description…")
+            self._desc_placeholder_active = True
+        self._desc_frame.pack(fill=tk.X, padx=8, pady=(4, 8))
+
+    def _hide_desc_panel(self) -> None:
+        if self._desc_shown_for is None:
+            return
+        self._desc_shown_for = None
+        self._desc_frame.pack_forget()
+
+    def _save_desc(self) -> None:
+        if self._selected is None or not (0 <= self._selected < len(self._tasks)):
+            return
+        if self._desc_placeholder_active:
+            return
+        content = self._desc_text.get("1.0", tk.END).rstrip("\n")
+        self._tasks = st.update_description(self._selected, content)
+        self._desc_shown_for = None
+
+    def _on_desc_focus_out(self, _event: tk.Event) -> None:
+        self._save_desc()
+
+    def _on_desc_escape(self, _event: tk.Event) -> str:
+        self._save_desc()
+        self._canvas.focus_set()
+        return "break"
+
+    def _on_desc_focus_in(self, _event: tk.Event) -> None:
+        if self._desc_placeholder_active:
+            self._desc_text.delete("1.0", tk.END)
+            self._desc_text.configure(fg=self._theme.entry_fg)
+            self._desc_placeholder_active = False
+
     def _on_enter(self, _event: tk.Event) -> None:
         self._submit_entry(position=_InsertPosition.FIRST)
 
@@ -570,9 +690,12 @@ class StackWindow:
             return
 
         # Digit keys (main row and numpad) select a row
-        if event.keysym.isdigit() or (event.keysym.startswith("KP_") and event.keysym[3:].isdigit()):
+        if event.keysym.isdigit() or (
+            event.keysym.startswith("KP_") and event.keysym[3:].isdigit()
+        ):
             digit = int(event.keysym[-1])
             if digit < len(self._tasks):
+                self._save_desc()
                 self._selected = digit
                 self._canvas.focus_set()
                 self._redraw()
@@ -590,6 +713,7 @@ class StackWindow:
             return
 
         if event.keysym in ("Up", "Down"):
+            self._save_desc()
             if self._selected is None:
                 self._selected = 0 if event.keysym == "Down" else len(self._tasks) - 1
             else:
@@ -659,39 +783,52 @@ class StackWindow:
         win.configure(bg=t.bg_frame)
 
         rows = [
-            ("Typing",          "Focus entry and type"),
-            ("Enter",           "Add task to bottom"),
-            ("Shift+Enter",     "Add task to top"),
-            ("Home",            "Add task to top  /  Promote selected to top"),
-            ("End",             "Add task to bottom  /  Send selected to bottom"),
-            ("0-9",             "Select task by index"),
-            ("Up / Down",       "Move selection"),
-            ("Left / Right",    "Move selected task up / down one position"),
-            ("Return",          "Edit selected task"),
-            ("Escape",          "Cancel edit  /  Hide window"),
+            ("Typing", "Focus entry and type"),
+            ("Enter", "Add task to bottom"),
+            ("Shift+Enter", "Add task to top"),
+            ("Home", "Add task to top  /  Promote selected to top"),
+            ("End", "Add task to bottom  /  Send selected to bottom"),
+            ("0-9", "Select task by index"),
+            ("Up / Down", "Move selection"),
+            ("Left / Right", "Move selected task up / down one position"),
+            ("Return", "Edit selected task"),
+            ("Escape", "Cancel edit  /  Hide window"),
             ("Backspace / Del", "Delete selected task"),
-            ("?",               "Show this help"),
+            ("?", "Show this help"),
         ]
 
         frame = tk.Frame(win, bg=t.bg_frame, padx=16, pady=12)
         frame.pack(fill=tk.BOTH, expand=True)
 
         for i, (key, desc) in enumerate(rows):
-            tk.Label(frame, text=key, font=("TkFixedFont", 10, "bold"),
-                     bg=t.bg_frame, anchor=tk.W, fg=t.fg_dim).grid(
-                row=i, column=0, sticky=tk.W, padx=(0, 16), pady=2)
-            tk.Label(frame, text=desc, font=("TkDefaultFont", 10),
-                     bg=t.bg_frame, anchor=tk.W, fg=t.fg).grid(
-                row=i, column=1, sticky=tk.W, pady=2)
+            tk.Label(
+                frame,
+                text=key,
+                font=("TkFixedFont", 10, "bold"),
+                bg=t.bg_frame,
+                anchor=tk.W,
+                fg=t.fg_dim,
+            ).grid(row=i, column=0, sticky=tk.W, padx=(0, 16), pady=2)
+            tk.Label(
+                frame, text=desc, font=("TkDefaultFont", 10), bg=t.bg_frame, anchor=tk.W, fg=t.fg
+            ).grid(row=i, column=1, sticky=tk.W, pady=2)
 
         def _close() -> None:
             self._help_win = None
             win.destroy()
 
-        btn = tk.Button(win, text="Close", command=_close,
-                        relief=tk.FLAT, bg=t.btn_bg, fg=t.btn_fg,
-                        activebackground=t.btn_active_bg, activeforeground=t.btn_fg,
-                        padx=12, pady=4)
+        btn = tk.Button(
+            win,
+            text="Close",
+            command=_close,
+            relief=tk.FLAT,
+            bg=t.btn_bg,
+            fg=t.btn_fg,
+            activebackground=t.btn_active_bg,
+            activeforeground=t.btn_fg,
+            padx=12,
+            pady=4,
+        )
         btn.pack(pady=(0, 12))
 
         win.bind("<Escape>", lambda _: _close())
@@ -718,6 +855,7 @@ class StackWindow:
     def _drag_press(self, event: tk.Event) -> None:
         if not self._tasks:
             return
+        self._save_desc()
         self._canvas.focus_set()
         self._drag_start = self._row_at(event.y)
         self._drag_y0 = event.y

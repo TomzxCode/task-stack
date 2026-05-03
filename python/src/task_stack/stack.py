@@ -21,6 +21,7 @@ class Task:
     last_current: datetime | None = field(default=None)
     duration: float = field(default=0.0)
     deleted_at: datetime | None = field(default=None)
+    description: str = field(default="")
 
     @property
     def is_deleted(self) -> bool:
@@ -76,6 +77,8 @@ class Task:
         d["duration"] = round(self.duration, 3)
         if self.deleted_at is not None:
             d["deleted_at"] = self.deleted_at.isoformat()
+        if self.description:
+            d["description"] = self.description
         return d
 
     @staticmethod
@@ -86,7 +89,7 @@ class Task:
         raw_duration = d.get("duration")
         try:
             duration = float(raw_duration) if raw_duration is not None else 0.0
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             duration = 0.0
 
         return Task(
@@ -96,6 +99,7 @@ class Task:
             last_current=_parse(d.get("last_current")),
             duration=duration,
             deleted_at=_parse(d.get("deleted_at")),
+            description=d.get("description") or "",
         )
 
 
@@ -307,6 +311,15 @@ def update_text(idx: int, text: str) -> list[Task]:
     if not (0 <= idx < len(active)):
         return active
     active[idx].text = new_text
+    return _commit(active, history)
+
+
+def update_description(idx: int, description: str) -> list[Task]:
+    """Update the description of the active task at ``idx`` in place."""
+    active, history = _split(_load_all())
+    if not (0 <= idx < len(active)):
+        return active
+    active[idx].description = description
     return _commit(active, history)
 
 

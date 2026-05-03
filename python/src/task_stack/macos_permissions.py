@@ -5,10 +5,11 @@ from __future__ import annotations
 import subprocess
 import sys
 
-
 # Settings URLs (Ventura+: System Settings deep links).
 _ACCESSIBILITY_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-_INPUT_MONITORING_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+_INPUT_MONITORING_URL = (
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+)
 
 
 def is_accessibility_trusted() -> bool:

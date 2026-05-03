@@ -26,3 +26,8 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.12",
+]

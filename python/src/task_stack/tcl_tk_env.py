@@ -1,4 +1,4 @@
-"""Point Tcl/Tk at a real install when the interpreter embeds broken paths (e.g. uv standalone builds on macOS)."""
+"""Fix Tcl/Tk paths when the interpreter embeds broken ones (e.g. uv standalone builds on macOS)."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def _match_tcl_tk_under_lib(lib: Path) -> tuple[Path, Path] | None:
 
         return sorted(paths, key=sort_key)
 
-    # Prefer Tcl/Tk 8 when both exist (typical CPython _tkinter); else use 9 (current Homebrew default).
+    # Prefer Tcl/Tk 8 when both exist (typical CPython _tkinter); else 9 (current Homebrew default).
     for prefer_eight in (True, False):
         for tcl_path, tm in by_major_then_name(tcl_paths, prefer_eight=prefer_eight):
             for tk_path, km in by_major_then_name(tk_paths, prefer_eight=prefer_eight):
