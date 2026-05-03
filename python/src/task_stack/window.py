@@ -17,8 +17,6 @@ class _InsertPosition(Enum):
     LAST = "last"
 
 
-_FONT_CURRENT = ("TkDefaultFont", 11, "bold")
-_FONT_NORMAL = ("TkDefaultFont", 11)
 _EMOJI_CACHE: dict[str, ImageTk.PhotoImage] = {}
 _COLOR_SELECTED_BG = "#d0e4ff"
 _COLOR_BG = "#ffffff"
@@ -64,6 +62,7 @@ class StackWindow:
         self._save_after_id: str | None = None
         self._tick_after_id: str | None = None
         self._help_win: tk.Toplevel | None = None
+        self._update_fonts()
 
         self._build_ui()
         self._apply_initial_geometry()
@@ -72,6 +71,12 @@ class StackWindow:
 
         root.bind("<Configure>", self._on_root_configure)
         self._schedule_tick()
+
+    def _update_fonts(self) -> None:
+        ff = self._settings.font_family
+        fs = self._settings.font_size
+        self._font_normal = (ff, fs)
+        self._font_current = (ff, fs, "bold")
 
     # ------------------------------------------------------------------
     # UI construction
@@ -86,7 +91,7 @@ class StackWindow:
 
         self._entry = tk.Entry(
             top,
-            font=_FONT_NORMAL,
+            font=self._font_normal,
             relief=tk.FLAT,
             bg="white",
             fg="#111",
@@ -248,7 +253,7 @@ class StackWindow:
                 c.create_line(8, y0 + dy, 18, y0 + dy, fill="#aaa", width=1.5)
 
             # index
-            font = _FONT_CURRENT if i == 0 else _FONT_NORMAL
+            font = self._font_current if i == 0 else self._font_normal
             c.create_text(26, y0 + _ROW_HEIGHT // 2, text=str(i), anchor=tk.W,
                           font=font, fill="#666")
 
@@ -278,7 +283,7 @@ class StackWindow:
         if not self._tasks:
             c.create_text(width // 2, _ROW_HEIGHT // 2,
                           text="No tasks — type above and press Enter",
-                          fill="#aaa", font=_FONT_NORMAL)
+                          fill="#aaa", font=self._font_normal)
 
     # ------------------------------------------------------------------
     # Input handling

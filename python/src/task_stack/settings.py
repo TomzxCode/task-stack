@@ -40,12 +40,16 @@ class WindowGeometry:
 
 
 DEFAULT_HOTKEY = "ctrl+shift+t"
+DEFAULT_FONT_FAMILY = "TkDefaultFont"
+DEFAULT_FONT_SIZE = 11
 
 
 @dataclass
 class Settings:
     window: WindowGeometry | None = None
     hotkey: str = DEFAULT_HOTKEY
+    font_family: str = DEFAULT_FONT_FAMILY
+    font_size: int = DEFAULT_FONT_SIZE
 
     @staticmethod
     def from_dict(d: dict) -> "Settings":
@@ -53,15 +57,21 @@ class Settings:
             return Settings()
         win = d.get("window")
         hk = d.get("hotkey")
+        ff = d.get("font_family")
+        fs = d.get("font_size")
         return Settings(
             window=WindowGeometry.from_dict(win) if isinstance(win, dict) else None,
             hotkey=hk if isinstance(hk, str) and hk.strip() else DEFAULT_HOTKEY,
+            font_family=ff if isinstance(ff, str) and ff.strip() else DEFAULT_FONT_FAMILY,
+            font_size=int(fs) if isinstance(fs, (int, float)) and 6 <= int(fs) <= 72 else DEFAULT_FONT_SIZE,
         )
 
     def to_dict(self) -> dict:
         return {
             "window": asdict(self.window) if self.window else None,
             "hotkey": self.hotkey,
+            "font_family": self.font_family,
+            "font_size": self.font_size,
         }
 
 
