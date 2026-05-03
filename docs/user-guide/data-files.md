@@ -8,8 +8,6 @@ The app stores everything in your home directory.
 |---|---|
 | `~/.task-stack.yaml` | Active tasks and soft-deleted history |
 | `~/.task-stack.settings.yaml` | Window geometry, hotkey, font, and icon configuration |
-| `~/.task-stack.json.bak` | Backup of the legacy JSON store (written once on migration) |
-| `~/.task-stack.settings.json.bak` | Backup of the legacy JSON settings file (written once on migration) |
 
 Both data files use atomic writes (write to a temp file, then rename) to
 prevent corruption.
@@ -48,7 +46,3 @@ Each task in `~/.task-stack.yaml` is a YAML mapping:
 Active tasks come first in stack order. Soft-deleted tasks are appended at the
 end, each with a `deleted_at` timestamp.
 
-## Migration
-
-On first launch, the app automatically migrates legacy JSON files to the
-current YAML format, preserving the originals as `.json.bak` files.

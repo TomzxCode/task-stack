@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -10,7 +9,6 @@ import yaml
 
 STACK_FILE = Path.home() / ".task-stack.yaml"
 _TMP = STACK_FILE.with_suffix(".yaml.tmp")
-_LEGACY_JSON_FILE = Path.home() / ".task-stack.json"
 
 
 @dataclass
@@ -116,26 +114,6 @@ def _parse_tasks(data: object) -> list[Task]:
     return out
 
 
-def _migrate_legacy_json() -> list[Task] | None:
-    """Read the old JSON file (if any) and write it back as YAML. Returns the tasks."""
-    if not _LEGACY_JSON_FILE.exists():
-        return None
-    try:
-        data = json.loads(_LEGACY_JSON_FILE.read_text())
-    except Exception:
-        return None
-    tasks = _parse_tasks(data)
-    try:
-        save(tasks)
-    except Exception:
-        return tasks
-    try:
-        _LEGACY_JSON_FILE.rename(_LEGACY_JSON_FILE.with_suffix(".json.bak"))
-    except OSError:
-        pass
-    return tasks
-
-
 def _migrate_durations(tasks: list[Task]) -> bool:
     """Backfill ``duration`` for legacy entries that lack it.
 
@@ -167,9 +145,6 @@ def _migrate_durations(tasks: list[Task]) -> bool:
 def _load_all() -> list[Task]:
     """Load every task from disk, including soft-deleted ones."""
     if not STACK_FILE.exists():
-        migrated = _migrate_legacy_json()
-        if migrated is not None:
-            return migrated
         return []
     try:
         data = yaml.safe_load(STACK_FILE.read_text())

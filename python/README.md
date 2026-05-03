@@ -102,8 +102,6 @@ The app stores everything in your home directory:
 | --- | --- |
 | `~/.task-stack.yaml` | Active stack and soft-deleted history (YAML list of tasks). |
 | `~/.task-stack.settings.yaml` | Window geometry and hotkey configuration (YAML). |
-| `~/.task-stack.json.bak` | Backup of the legacy JSON store, written once on first migration. |
-| `~/.task-stack.settings.json.bak` | Backup of the legacy JSON settings file, written once on first migration. |
 
 ### Customize the hotkey
 
