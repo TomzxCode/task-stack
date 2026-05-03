@@ -29,10 +29,22 @@ whether the pressed key is the configured key.
 from __future__ import annotations
 
 import string
+import sys
 from dataclasses import dataclass, field
 from typing import Iterable
 
 from pynput import keyboard
+
+
+def _vk_to_char(vk: int) -> str | None:
+    """Resolve a Windows VK code to a character using ToUnicode (no modifiers)."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    buf = ctypes.create_unicode_buffer(8)
+    state = (ctypes.c_ubyte * 256)()
+    n = ctypes.windll.user32.ToUnicode(vk, 0, state, buf, 8, 0)
+    return buf.value[0].lower() if n > 0 else None
 
 
 _MODIFIER_ALIASES: dict[str, str] = {
@@ -119,6 +131,14 @@ class HotkeySpec:
                 kc_vk = getattr(key, "vk", None)
                 if kc_vk is not None and kc_vk == self.vk:
                     return True
+            # On Windows, modifiers suppress char translation so key.char is None.
+            # Resolve the pressed VK back to a character and compare.
+            if self.char is not None and key.char is None:
+                kc_vk = getattr(key, "vk", None)
+                if kc_vk is not None:
+                    resolved = _vk_to_char(kc_vk)
+                    if resolved == self.char:
+                        return True
         return False
 
 
