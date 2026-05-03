@@ -249,6 +249,17 @@ def push_next(text: str) -> list[Task]:
     return _commit(active, history)
 
 
+def push_last(text: str) -> list[Task]:
+    """Insert a new task at the bottom of the active list."""
+    now = datetime.now().astimezone()
+    active, history = _split(_load_all())
+    task = Task(text=text.strip(), created_at=now)
+    if not active:
+        task.mark_current(now)
+    active.append(task)
+    return _commit(active, history)
+
+
 def pop() -> tuple[Task | None, list[Task]]:
     now = datetime.now().astimezone()
     active, history = _split(_load_all())

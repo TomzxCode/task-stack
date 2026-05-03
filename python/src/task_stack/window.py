@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import tkinter as tk
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Callable
 
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 from . import settings as cfg
 from . import stack as st
+
+
+class _InsertPosition(Enum):
+    FIRST = "first"
+    NEXT = "next"
+    LAST = "last"
 
 
 _FONT_CURRENT = ("TkDefaultFont", 11, "bold")
@@ -277,7 +284,7 @@ class StackWindow:
     # Input handling
     # ------------------------------------------------------------------
 
-    def _submit_entry(self, *, as_next: bool) -> None:
+    def _submit_entry(self, *, position: _InsertPosition = _InsertPosition.FIRST) -> None:
         text = self._entry.get().strip()
         if self._editing_index is not None:
             idx = self._editing_index
@@ -297,7 +304,12 @@ class StackWindow:
         if not text:
             return
         self._entry.delete(0, tk.END)
-        tasks = st.push_next(text) if as_next else st.push(text)
+        if position == _InsertPosition.NEXT:
+            tasks = st.push_next(text)
+        elif position == _InsertPosition.LAST:
+            tasks = st.push_last(text)
+        else:
+            tasks = st.push(text)
         self._tasks = tasks
         self._selected = None
         self._redraw()
@@ -323,18 +335,18 @@ class StackWindow:
         self._entry.delete(0, tk.END)
 
     def _on_enter(self, _event: tk.Event) -> None:
-        self._submit_entry(as_next=False)
+        self._submit_entry(position=_InsertPosition.FIRST)
 
     def _on_shift_enter(self, _event: tk.Event) -> str:
-        self._submit_entry(as_next=True)
+        self._submit_entry(position=_InsertPosition.NEXT)
         return "break"
 
     def _on_entry_home(self, _event: tk.Event) -> str:
-        self._submit_entry(as_next=True)
+        self._submit_entry(position=_InsertPosition.FIRST)
         return "break"
 
     def _on_entry_end(self, _event: tk.Event) -> str:
-        self._submit_entry(as_next=False)
+        self._submit_entry(position=_InsertPosition.LAST)
         return "break"
 
     def _on_entry_escape(self, _event: tk.Event) -> str:
