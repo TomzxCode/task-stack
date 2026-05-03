@@ -20,10 +20,12 @@ class TrayApp:
         on_open: Callable[[], None],
         on_quit: Callable[[], None],
         hotkey_label: str | None = None,
+        on_help: Callable[[], None] | None = None,
     ) -> None:
         self._on_open = on_open
         self._on_quit = on_quit
         self._hotkey_label = hotkey_label
+        self._on_help = on_help
         self._icon: pystray.Icon | None = None
 
     def _create_icon(self) -> pystray.Icon:
@@ -78,6 +80,11 @@ class TrayApp:
                 enabled=bool(tasks),
             ),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                "Keyboard Shortcuts",
+                lambda icon, item: self._on_help() if self._on_help else None,
+                enabled=self._on_help is not None,
+            ),
             pystray.MenuItem("Quit", lambda icon, item: self._on_quit()),
         ]
         return pystray.Menu(*items)

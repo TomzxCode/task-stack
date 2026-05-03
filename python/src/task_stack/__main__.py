@@ -71,6 +71,7 @@ def main() -> None:
         on_open=coordinator.request_show,
         on_quit=coordinator.request_quit,
         hotkey_label=hotkey_spec.pretty,
+        on_help=lambda: root.after(0, win.show_help),
     )
     coordinator.set_tray(tray)
 

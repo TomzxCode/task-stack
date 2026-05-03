@@ -38,6 +38,7 @@ class StackWindow:
         self._settings = cfg.load()
         self._save_after_id: str | None = None
         self._tick_after_id: str | None = None
+        self._help_win: tk.Toplevel | None = None
 
         self._build_ui()
         self._apply_initial_geometry()
@@ -74,6 +75,8 @@ class StackWindow:
         self._entry.pack(fill=tk.X, ipady=4)
         self._entry.bind("<Return>", self._on_enter)
         self._entry.bind("<Shift-Return>", self._on_shift_enter)
+        self._entry.bind("<Home>", self._on_entry_home)
+        self._entry.bind("<End>", self._on_entry_end)
         self._entry.bind("<Escape>", self._on_entry_escape)
 
         self._canvas = tk.Canvas(self.root, bg=_COLOR_BG, highlightthickness=0,
@@ -308,6 +311,14 @@ class StackWindow:
         self._submit_entry(as_next=True)
         return "break"
 
+    def _on_entry_home(self, _event: tk.Event) -> str:
+        self._submit_entry(as_next=True)
+        return "break"
+
+    def _on_entry_end(self, _event: tk.Event) -> str:
+        self._submit_entry(as_next=False)
+        return "break"
+
     def _on_entry_escape(self, _event: tk.Event) -> str:
         if self._editing_index is not None:
             self._cancel_edit()
@@ -331,6 +342,10 @@ class StackWindow:
                 self._selected = digit
                 self._canvas.focus_set()
                 self._redraw()
+            return
+
+        if event.char == "?":
+            self._show_help()
             return
 
         # Printable character: redirect to entry and let the user type
@@ -364,9 +379,17 @@ class StackWindow:
                 self.on_stack_change()
             return
 
-        if event.keysym in ("slash", "KP_Divide"):
+        if event.keysym == "Home":
             self._cancel_edit()
             tasks = st.promote(self._selected)
+            self._tasks = tasks
+            self._selected = None
+            self._redraw()
+            self.on_stack_change()
+
+        elif event.keysym == "End":
+            self._cancel_edit()
+            tasks = st.reorder(self._selected, len(self._tasks) - 1)
             self._tasks = tasks
             self._selected = None
             self._redraw()
@@ -379,6 +402,73 @@ class StackWindow:
             self._selected = None
             self._redraw()
             self.on_stack_change()
+
+    def show_help(self) -> None:
+        self._show_help()
+
+    def _show_help(self) -> None:
+        if self._help_win is not None:
+            try:
+                self._help_win.lift()
+                self._help_win.focus_force()
+                return
+            except tk.TclError:
+                self._help_win = None
+
+        win = tk.Toplevel(self.root)
+        self._help_win = win
+        win.title("Keyboard Shortcuts")
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+
+        rows = [
+            ("Typing",          "Focus entry and type"),
+            ("Enter",           "Add task to bottom"),
+            ("Shift+Enter",     "Add task to top"),
+            ("Home",            "Add task to top  /  Promote selected to top"),
+            ("End",             "Add task to bottom  /  Send selected to bottom"),
+            ("0-9",             "Select task by index"),
+            ("Up / Down",       "Move selection"),
+            ("Left / Right",    "Move selected task up / down one position"),
+            ("Return",          "Edit selected task"),
+            ("Escape",          "Cancel edit  /  Hide window"),
+            ("Backspace / Del", "Delete selected task"),
+            ("?",               "Show this help"),
+        ]
+
+        frame = tk.Frame(win, bg="#f0f0f0", padx=16, pady=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        for i, (key, desc) in enumerate(rows):
+            tk.Label(frame, text=key, font=("TkFixedFont", 10, "bold"),
+                     bg="#f0f0f0", anchor=tk.W, fg="#333").grid(
+                row=i, column=0, sticky=tk.W, padx=(0, 16), pady=2)
+            tk.Label(frame, text=desc, font=("TkDefaultFont", 10),
+                     bg="#f0f0f0", anchor=tk.W, fg="#111").grid(
+                row=i, column=1, sticky=tk.W, pady=2)
+
+        def _close() -> None:
+            self._help_win = None
+            win.destroy()
+
+        btn = tk.Button(win, text="Close", command=_close,
+                        relief=tk.FLAT, bg="#4a90e2", fg="white",
+                        activebackground="#357abd", activeforeground="white",
+                        padx=12, pady=4)
+        btn.pack(pady=(0, 12))
+
+        win.bind("<Escape>", lambda _: _close())
+        win.bind("<question>", lambda _: _close())
+        win.protocol("WM_DELETE_WINDOW", _close)
+
+        win.update_idletasks()
+        if self.is_visible():
+            x = self.root.winfo_x() + (self.root.winfo_width() - win.winfo_width()) // 2
+            y = self.root.winfo_y() + (self.root.winfo_height() - win.winfo_height()) // 2
+        else:
+            x = (self.root.winfo_screenwidth() - win.winfo_width()) // 2
+            y = (self.root.winfo_screenheight() - win.winfo_height()) // 3
+        win.geometry(f"+{x}+{y}")
 
     # ------------------------------------------------------------------
     # Drag and drop
