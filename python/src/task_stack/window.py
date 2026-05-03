@@ -397,9 +397,10 @@ class StackWindow:
 
         elif event.keysym in ("BackSpace", "Delete"):
             self._cancel_edit()
-            tasks = st.remove(self._selected)
+            deleted_idx = self._selected
+            tasks = st.remove(deleted_idx)
             self._tasks = tasks
-            self._selected = None
+            self._selected = min(deleted_idx, len(tasks) - 1) if tasks else None
             self._redraw()
             self.on_stack_change()
 
