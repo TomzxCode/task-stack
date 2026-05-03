@@ -516,4 +516,9 @@ class StackWindow:
             self.on_stack_change()
 
     def _drag_release(self, event: tk.Event) -> None:
+        if self._drag_start is not None:
+            released_row = self._row_at(event.y)
+            if released_row == self._row_at(self._drag_y0):
+                self._selected = released_row
+                self._redraw()
         self._drag_start = None
