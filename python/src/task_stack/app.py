@@ -30,7 +30,8 @@ class TrayApp:
 
     def _create_icon(self) -> pystray.Icon:
         tasks = st.load()
-        image = make_icon(len(tasks))
+        thresholds = cfg.load().resolved_icon_thresholds()
+        image = make_icon(len(tasks), thresholds)
         current_text = tasks[0].text if tasks else "No tasks"
         return pystray.Icon(
             "task-stack",
@@ -55,7 +56,8 @@ class TrayApp:
     def update(self, tasks: list[st.Task]) -> None:
         if self._icon is None:
             return
-        self._icon.icon = make_icon(len(tasks))
+        thresholds = cfg.load().resolved_icon_thresholds()
+        self._icon.icon = make_icon(len(tasks), thresholds)
         self._icon.title = tasks[0].text if tasks else "No tasks"
         self._icon.menu = self._build_menu(tasks)
 
