@@ -9,6 +9,8 @@ import yaml
 
 STACK_FILE = Path.home() / ".task-stack.yaml"
 _TMP = STACK_FILE.with_suffix(".yaml.tmp")
+HISTORY_FILE = Path.home() / ".task-stack.history.yaml"
+_HISTORY_TMP = HISTORY_FILE.with_suffix(".history.yaml.tmp")
 
 
 @dataclass
@@ -142,30 +144,54 @@ def _migrate_durations(tasks: list[Task]) -> bool:
     return changed
 
 
-def _load_all() -> list[Task]:
-    """Load every task from disk, including soft-deleted ones."""
+def _load_active() -> list[Task]:
+    """Load active (non-deleted) tasks from the main stack file.
+
+    Handles two legacy migrations on first encounter:
+    - inline deleted tasks: moved to the history file
+    - missing duration fields: backfilled from started_at/last_current
+    """
     if not STACK_FILE.exists():
         return []
     try:
         data = yaml.safe_load(STACK_FILE.read_text())
     except Exception:
         return []
-    tasks = _parse_tasks(data)
-    if _migrate_durations(tasks):
+    all_tasks = _parse_tasks(data)
+    active = [t for t in all_tasks if not t.is_deleted]
+    inline_deleted = [t for t in all_tasks if t.is_deleted]
+
+    duration_changed = _migrate_durations(active)
+
+    if inline_deleted:
+        history = _load_history()
+        history.extend(inline_deleted)
         try:
-            _save_all(tasks)
+            _save_history(history)
+            _save_active(active)
         except Exception:
             pass
-    return tasks
+    elif duration_changed:
+        try:
+            _save_active(active)
+        except Exception:
+            pass
+
+    return active
 
 
-def _split(tasks: list[Task]) -> tuple[list[Task], list[Task]]:
-    active = [t for t in tasks if not t.is_deleted]
-    deleted = [t for t in tasks if t.is_deleted]
-    return active, deleted
+def _load_history() -> list[Task]:
+    """Load soft-deleted tasks from the history file."""
+    if not HISTORY_FILE.exists():
+        return []
+    try:
+        data = yaml.safe_load(HISTORY_FILE.read_text())
+    except Exception:
+        return []
+    return _parse_tasks(data)
 
 
-def _save_all(tasks: list[Task]) -> None:
+def _save_active(tasks: list[Task]) -> None:
     data = yaml.safe_dump(
         [t.to_dict() for t in tasks],
         sort_keys=False,
@@ -176,39 +202,48 @@ def _save_all(tasks: list[Task]) -> None:
     os.replace(_TMP, STACK_FILE)
 
 
-def _commit(active: list[Task], deleted: list[Task]) -> list[Task]:
-    """Persist active+deleted (deleted appended at the end) and return the active list."""
-    _save_all(active + deleted)
+def _save_history(tasks: list[Task]) -> None:
+    data = yaml.safe_dump(
+        [t.to_dict() for t in tasks],
+        sort_keys=False,
+        allow_unicode=True,
+        default_flow_style=False,
+    )
+    _HISTORY_TMP.write_text(data)
+    os.replace(_HISTORY_TMP, HISTORY_FILE)
+
+
+def _commit(active: list[Task]) -> list[Task]:
+    _save_active(active)
     return active
 
 
 def load() -> list[Task]:
     """Return the active (non-deleted) task stack."""
-    return [t for t in _load_all() if not t.is_deleted]
+    return _load_active()
 
 
 def save(tasks: list[Task]) -> None:
     """Replace the active task stack on disk, preserving any soft-deleted history."""
-    _, deleted = _split(_load_all())
-    _save_all(tasks + deleted)
+    _save_active(tasks)
 
 
 def deleted() -> list[Task]:
     """Return the soft-deleted history, oldest deletions first."""
-    history = [t for t in _load_all() if t.is_deleted]
+    history = _load_history()
     history.sort(key=lambda t: t.deleted_at or datetime.min.replace(tzinfo=timezone.utc))
     return history
 
 
 def push(text: str) -> list[Task]:
     now = datetime.now().astimezone()
-    active, history = _split(_load_all())
+    active = _load_active()
     if active:
         active[0].end_current_stint(now)
     task = Task(text=text.strip(), created_at=now)
     task.mark_current(now)
     active.insert(0, task)
-    return _commit(active, history)
+    return _commit(active)
 
 
 def push_next(text: str) -> list[Task]:
@@ -218,44 +253,44 @@ def push_next(text: str) -> list[Task]:
     becomes current (same as ``push``).
     """
     now = datetime.now().astimezone()
-    active, history = _split(_load_all())
+    active = _load_active()
     task = Task(text=text.strip(), created_at=now)
     if not active:
         task.mark_current(now)
         active.insert(0, task)
     else:
         active.insert(1, task)
-    return _commit(active, history)
+    return _commit(active)
 
 
 def push_last(text: str) -> list[Task]:
     """Insert a new task at the bottom of the active list."""
     now = datetime.now().astimezone()
-    active, history = _split(_load_all())
+    active = _load_active()
     task = Task(text=text.strip(), created_at=now)
     if not active:
         task.mark_current(now)
     active.append(task)
-    return _commit(active, history)
+    return _commit(active)
 
 
 def pop() -> tuple[Task | None, list[Task]]:
     now = datetime.now().astimezone()
-    active, history = _split(_load_all())
+    active = _load_active()
     if not active:
         return None, []
     removed = active.pop(0)
     removed.end_current_stint(now)
     removed.deleted_at = now
-    history.append(removed)
+    _save_history(_load_history() + [removed])
     if active:
         active[0].mark_current(now)
-    return removed, _commit(active, history)
+    return removed, _commit(active)
 
 
 def reorder(from_idx: int, to_idx: int) -> list[Task]:
     now = datetime.now().astimezone()
-    active, history = _split(_load_all())
+    active = _load_active()
     if from_idx == to_idx or not (0 <= from_idx < len(active)) or not (0 <= to_idx < len(active)):
         return active
     if from_idx == 0 and to_idx != 0:
@@ -266,7 +301,7 @@ def reorder(from_idx: int, to_idx: int) -> list[Task]:
     active.insert(to_idx, task)
     if to_idx == 0:
         active[0].mark_current(now)
-    return _commit(active, history)
+    return _commit(active)
 
 
 def promote(idx: int) -> list[Task]:
@@ -281,36 +316,36 @@ def update_text(idx: int, text: str) -> list[Task]:
     """
     new_text = text.strip()
     if not new_text:
-        return [t for t in _load_all() if not t.is_deleted]
-    active, history = _split(_load_all())
+        return _load_active()
+    active = _load_active()
     if not (0 <= idx < len(active)):
         return active
     active[idx].text = new_text
-    return _commit(active, history)
+    return _commit(active)
 
 
 def update_description(idx: int, description: str) -> list[Task]:
     """Update the description of the active task at ``idx`` in place."""
-    active, history = _split(_load_all())
+    active = _load_active()
     if not (0 <= idx < len(active)):
         return active
     active[idx].description = description
-    return _commit(active, history)
+    return _commit(active)
 
 
 def remove(idx: int) -> list[Task]:
     now = datetime.now().astimezone()
-    active, history = _split(_load_all())
+    active = _load_active()
     if not (0 <= idx < len(active)):
         return active
     removed = active.pop(idx)
     if idx == 0:
         removed.end_current_stint(now)
     removed.deleted_at = now
-    history.append(removed)
+    _save_history(_load_history() + [removed])
     if active and idx == 0:
         active[0].mark_current(now)
-    return _commit(active, history)
+    return _commit(active)
 
 
 def format_timestamp(dt: datetime | None, now: datetime | None = None) -> str:
