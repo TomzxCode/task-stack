@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import platform
+import threading
 import tkinter as tk
 import tkinter.font as tkFont
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Callable
@@ -18,9 +21,138 @@ class _InsertPosition(Enum):
     LAST = "last"
 
 
+@dataclass(frozen=True)
+class _Theme:
+    bg: str
+    bg_frame: str
+    selected_bg: str
+    fg: str
+    fg_dim: str
+    fg_muted: str
+    entry_bg: str
+    entry_fg: str
+    entry_cursor: str
+    entry_disabled_fg: str
+    entry_highlight_bg: str
+    entry_highlight_active: str
+    drag_handle: str
+    btn_bg: str
+    btn_fg: str
+    btn_active_bg: str
+
+
+_LIGHT = _Theme(
+    bg="#ffffff",
+    bg_frame="#f0f0f0",
+    selected_bg="#d0e4ff",
+    fg="#111111",
+    fg_dim="#444444",
+    fg_muted="#888888",
+    entry_bg="white",
+    entry_fg="#111111",
+    entry_cursor="#111111",
+    entry_disabled_fg="#888888",
+    entry_highlight_bg="#aaaaaa",
+    entry_highlight_active="#4a90e2",
+    drag_handle="#aaaaaa",
+    btn_bg="#4a90e2",
+    btn_fg="white",
+    btn_active_bg="#357abd",
+)
+
+_DARK = _Theme(
+    bg="#1e1e1e",
+    bg_frame="#2d2d2d",
+    selected_bg="#1a3a5c",
+    fg="#e0e0e0",
+    fg_dim="#b0b0b0",
+    fg_muted="#707070",
+    entry_bg="#3c3c3c",
+    entry_fg="#e0e0e0",
+    entry_cursor="#e0e0e0",
+    entry_disabled_fg="#707070",
+    entry_highlight_bg="#555555",
+    entry_highlight_active="#4a90e2",
+    drag_handle="#666666",
+    btn_bg="#2a6099",
+    btn_fg="#e0e0e0",
+    btn_active_bg="#1f4d7a",
+)
+
+_THEME_POLL_MS = 30_000  # macOS fallback only
+
+
+def _os_prefers_dark() -> bool:
+    if platform.system() == "Windows":
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            )
+            value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            winreg.CloseKey(key)
+            return value == 0
+        except Exception:
+            return False
+    if platform.system() == "Darwin":
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                capture_output=True, text=True,
+            )
+            return result.stdout.strip().lower() == "dark"
+        except Exception:
+            return False
+    return False
+
+
+def _watch_windows_theme(callback: Callable[[], None], stop: threading.Event) -> None:
+    """Block on registry change notifications and call callback on each change."""
+    try:
+        import ctypes
+        import winreg
+
+        _REG_NOTIFY_CHANGE_LAST_SET = 0x00000004
+
+        advapi32 = ctypes.windll.advapi32
+        kernel32 = ctypes.windll.kernel32
+
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            access=winreg.KEY_NOTIFY | winreg.KEY_READ,
+        )
+        # Create a manual-reset event so we can also wake on stop
+        stop_event = kernel32.CreateEventW(None, True, False, None)
+        # Wire the threading.Event to the Win32 event via a helper thread
+        def _set_stop() -> None:
+            stop.wait()
+            kernel32.SetEvent(stop_event)
+        threading.Thread(target=_set_stop, daemon=True).start()
+
+        reg_event = kernel32.CreateEventW(None, True, False, None)
+        try:
+            while not stop.is_set():
+                kernel32.ResetEvent(reg_event)
+                advapi32.RegNotifyChangeKeyValue(
+                    key.handle, False, _REG_NOTIFY_CHANGE_LAST_SET, reg_event, True
+                )
+                handles = (ctypes.c_void_p * 2)(reg_event, stop_event)
+                # Wait for either registry change or stop signal
+                kernel32.WaitForMultipleObjects(2, handles, False, 0xFFFFFFFF)
+                if not stop.is_set():
+                    callback()
+        finally:
+            kernel32.CloseHandle(reg_event)
+            kernel32.CloseHandle(stop_event)
+            key.Close()
+    except Exception:
+        pass
+
+
 _EMOJI_CACHE: dict[str, ImageTk.PhotoImage] = {}
-_COLOR_SELECTED_BG = "#d0e4ff"
-_COLOR_BG = "#ffffff"
 _ROW_HEIGHT = 28
 _DEFAULT_WIDTH = 480
 _DEFAULT_HEIGHT = 360
@@ -70,7 +202,10 @@ class StackWindow:
         self._settings = cfg.load()
         self._save_after_id: str | None = None
         self._tick_after_id: str | None = None
+        self._theme_poll_after_id: str | None = None
+        self._theme_stop = threading.Event()
         self._help_win: tk.Toplevel | None = None
+        self._theme: _Theme = _DARK if _os_prefers_dark() else _LIGHT
         self._update_fonts()
 
         self._build_ui()
@@ -79,7 +214,9 @@ class StackWindow:
         self._canvas.focus_set()
 
         root.bind("<Configure>", self._on_root_configure)
+        root.bind("<Destroy>", self._on_destroy)
         self._schedule_tick()
+        self._start_theme_watcher()
 
     def _update_fonts(self) -> None:
         ff = self._settings.font_family
@@ -96,24 +233,25 @@ class StackWindow:
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        self.root.configure(bg="#f0f0f0")
+        t = self._theme
+        self.root.configure(bg=t.bg_frame)
         pad = {"padx": 8, "pady": 6}
 
-        top = tk.Frame(self.root, bg="#f0f0f0")
-        top.pack(fill=tk.X, **pad)
+        self._top_frame = tk.Frame(self.root, bg=t.bg_frame)
+        self._top_frame.pack(fill=tk.X, **pad)
 
         self._entry = tk.Entry(
-            top,
+            self._top_frame,
             font=self._font_normal,
             relief=tk.FLAT,
-            bg="white",
-            fg="#111",
-            insertbackground="#111",
-            disabledforeground="#888",
-            readonlybackground="white",
+            bg=t.entry_bg,
+            fg=t.entry_fg,
+            insertbackground=t.entry_cursor,
+            disabledforeground=t.entry_disabled_fg,
+            readonlybackground=t.entry_bg,
             highlightthickness=1,
-            highlightbackground="#aaa",
-            highlightcolor="#4a90e2",
+            highlightbackground=t.entry_highlight_bg,
+            highlightcolor=t.entry_highlight_active,
         )
         self._entry.pack(fill=tk.X, ipady=4)
         self._entry.bind("<Return>", self._on_enter)
@@ -122,7 +260,7 @@ class StackWindow:
         self._entry.bind("<End>", self._on_entry_end)
         self._entry.bind("<Escape>", self._on_entry_escape)
 
-        self._canvas = tk.Canvas(self.root, bg=_COLOR_BG, highlightthickness=0,
+        self._canvas = tk.Canvas(self.root, bg=t.bg, highlightthickness=0,
                                  width=460, height=_ROW_HEIGHT)
         self._canvas.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
@@ -196,6 +334,62 @@ class StackWindow:
         finally:
             self._schedule_tick()
 
+    def _start_theme_watcher(self) -> None:
+        if platform.system() == "Windows":
+            threading.Thread(
+                target=_watch_windows_theme,
+                args=(self._on_theme_change_from_thread, self._theme_stop),
+                daemon=True,
+            ).start()
+        else:
+            self._schedule_theme_poll()
+
+    def _on_theme_change_from_thread(self) -> None:
+        # Called from background thread — post to tkinter's event loop
+        try:
+            self.root.after(0, self._check_theme_change)
+        except tk.TclError:
+            pass
+
+    def _check_theme_change(self) -> None:
+        new_theme = _DARK if _os_prefers_dark() else _LIGHT
+        if new_theme is not self._theme:
+            self._theme = new_theme
+            self._apply_theme()
+
+    def _schedule_theme_poll(self) -> None:
+        try:
+            self._theme_poll_after_id = self.root.after(_THEME_POLL_MS, self._on_theme_poll)
+        except tk.TclError:
+            self._theme_poll_after_id = None
+
+    def _on_theme_poll(self) -> None:
+        self._theme_poll_after_id = None
+        try:
+            self._check_theme_change()
+        finally:
+            self._schedule_theme_poll()
+
+    def _on_destroy(self, event: tk.Event) -> None:
+        if event.widget is self.root:
+            self._theme_stop.set()
+
+    def _apply_theme(self) -> None:
+        t = self._theme
+        self.root.configure(bg=t.bg_frame)
+        self._top_frame.configure(bg=t.bg_frame)
+        self._entry.configure(
+            bg=t.entry_bg,
+            fg=t.entry_fg,
+            insertbackground=t.entry_cursor,
+            disabledforeground=t.entry_disabled_fg,
+            readonlybackground=t.entry_bg,
+            highlightbackground=t.entry_highlight_bg,
+            highlightcolor=t.entry_highlight_active,
+        )
+        self._canvas.configure(bg=t.bg)
+        self._redraw()
+
     def _capture_geometry(self) -> None:
         self._save_after_id = None
         try:
@@ -236,6 +430,7 @@ class StackWindow:
 
     def _redraw(self) -> None:
         c = self._canvas
+        t = self._theme
         c.delete("all")
         now = datetime.now().astimezone()
 
@@ -252,39 +447,32 @@ class StackWindow:
             y0 = i * _ROW_HEIGHT
             y1 = y0 + _ROW_HEIGHT
 
-            if i == self._selected:
-                bg = _COLOR_SELECTED_BG
-            else:
-                bg = _COLOR_BG
-
+            bg = t.selected_bg if i == self._selected else t.bg
             c.create_rectangle(0, y0, width, y1, fill=bg, outline="", tags=f"row{i}")
 
-            # drag handle
             for dy in (8, 13, 18):
-                c.create_line(8, y0 + dy, 18, y0 + dy, fill="#aaa", width=1.5)
+                c.create_line(8, y0 + dy, 18, y0 + dy, fill=t.drag_handle, width=1.5)
 
-            # index
             font = self._font_current if i == 0 else self._font_normal
             c.create_text(26, y0 + _ROW_HEIGHT // 2, text=str(i), anchor=tk.W,
-                          font=font, fill="#666")
+                          font=font, fill=t.fg_muted)
 
-            # indicator (rendered via Pillow for color emoji support)
             indicator = "🔥" if i == 0 else "💤"
             img = _emoji_image(indicator)
             c.create_image(44, y0 + _ROW_HEIGHT // 2, image=img, anchor=tk.W)
 
             text_width = max(40, text_right - 66)
             c.create_text(66, y0 + _ROW_HEIGHT // 2, text=task.text, anchor=tk.W,
-                          font=font, fill="#111", width=text_width)
+                          font=font, fill=t.fg, width=text_width)
 
             if i == 0:
                 ts_text = st.format_timestamp(task.started_at, now)
                 dur_seconds = task.live_duration(now)
-                col_fill = "#444"
+                col_fill = t.fg_dim
             else:
                 ts_text = st.format_timestamp(task.last_current, now)
                 dur_seconds = task.duration
-                col_fill = "#888"
+                col_fill = t.fg_muted
             c.create_text(ts_x, y0 + _ROW_HEIGHT // 2, text=ts_text, anchor=tk.E,
                           font=self._font_normal, fill=col_fill)
             c.create_text(dur_x, y0 + _ROW_HEIGHT // 2,
@@ -294,7 +482,7 @@ class StackWindow:
         if not self._tasks:
             c.create_text(width // 2, _ROW_HEIGHT // 2,
                           text="No tasks — type above and press Enter",
-                          fill="#aaa", font=self._font_normal)
+                          fill=t.fg_muted, font=self._font_normal)
 
     # ------------------------------------------------------------------
     # Input handling
@@ -462,11 +650,13 @@ class StackWindow:
             except tk.TclError:
                 self._help_win = None
 
+        t = self._theme
         win = tk.Toplevel(self.root)
         self._help_win = win
         win.title("Keyboard Shortcuts")
         win.resizable(False, False)
         win.attributes("-topmost", True)
+        win.configure(bg=t.bg_frame)
 
         rows = [
             ("Typing",          "Focus entry and type"),
@@ -483,15 +673,15 @@ class StackWindow:
             ("?",               "Show this help"),
         ]
 
-        frame = tk.Frame(win, bg="#f0f0f0", padx=16, pady=12)
+        frame = tk.Frame(win, bg=t.bg_frame, padx=16, pady=12)
         frame.pack(fill=tk.BOTH, expand=True)
 
         for i, (key, desc) in enumerate(rows):
             tk.Label(frame, text=key, font=("TkFixedFont", 10, "bold"),
-                     bg="#f0f0f0", anchor=tk.W, fg="#333").grid(
+                     bg=t.bg_frame, anchor=tk.W, fg=t.fg_dim).grid(
                 row=i, column=0, sticky=tk.W, padx=(0, 16), pady=2)
             tk.Label(frame, text=desc, font=("TkDefaultFont", 10),
-                     bg="#f0f0f0", anchor=tk.W, fg="#111").grid(
+                     bg=t.bg_frame, anchor=tk.W, fg=t.fg).grid(
                 row=i, column=1, sticky=tk.W, pady=2)
 
         def _close() -> None:
@@ -499,8 +689,8 @@ class StackWindow:
             win.destroy()
 
         btn = tk.Button(win, text="Close", command=_close,
-                        relief=tk.FLAT, bg="#4a90e2", fg="white",
-                        activebackground="#357abd", activeforeground="white",
+                        relief=tk.FLAT, bg=t.btn_bg, fg=t.btn_fg,
+                        activebackground=t.btn_active_bg, activeforeground=t.btn_fg,
                         padx=12, pady=4)
         btn.pack(pady=(0, 12))
 
