@@ -277,11 +277,25 @@ class StackWindow:
         fs = self._settings.font_size
         self._font_normal = (ff, fs)
         self._font_current = (ff, fs, "bold")
-        f = tkFont.Font(family=ff, size=fs)
+        self._font_obj_normal = tkFont.Font(family=ff, size=fs)
+        self._font_obj_current = tkFont.Font(family=ff, size=fs, weight="bold")
+        f = self._font_obj_normal
         # measure widest representative strings + small padding
         self._dur_col_w = f.measure("00h 00m") + 8
         self._ts_col_w = f.measure("00m ago") + 8
         self._lc_col_w = f.measure("00m ago") + 8
+        self._idx_col_w = f.measure("999") + 4
+
+    def _truncate(self, text: str, max_px: int, is_current: bool) -> str:
+        font = self._font_obj_current if is_current else self._font_obj_normal
+        if font.measure(text) <= max_px:
+            return text
+        ellipsis = "…"
+        for end in range(len(text) - 1, 0, -1):
+            candidate = text[:end] + ellipsis
+            if font.measure(candidate) <= max_px:
+                return candidate
+        return ellipsis
 
     # ------------------------------------------------------------------
     # UI construction
@@ -544,29 +558,31 @@ class StackWindow:
                 c.create_line(8, y0 + dy, 18, y0 + dy, fill=t.drag_handle, width=1.5)
 
             font = self._font_current if i == 0 else self._font_normal
+            idx_x = 22
             c.create_text(
-                26, y0 + _ROW_HEIGHT // 2, text=str(i), anchor=tk.W, font=font, fill=t.fg_muted
+                idx_x, y0 + _ROW_HEIGHT // 2, text=str(i), anchor=tk.W, font=font, fill=t.fg_muted
             )
-
+            indicator_x = idx_x + self._idx_col_w
             indicator = "🔥" if i == 0 else "💤"
             img = _emoji_image(indicator)
-            c.create_image(44, y0 + _ROW_HEIGHT // 2, image=img, anchor=tk.W)
+            c.create_image(indicator_x, y0 + _ROW_HEIGHT // 2, image=img, anchor=tk.W)
 
+            note_x = indicator_x + 20
             if task.description:
                 img_note = _emoji_image("📝")
-                c.create_image(64, y0 + _ROW_HEIGHT // 2, image=img_note, anchor=tk.W)
-                text_x = 86
+                c.create_image(note_x, y0 + _ROW_HEIGHT // 2, image=img_note, anchor=tk.W)
+                text_x = note_x + 22
             else:
-                text_x = 66
-            text_width = max(40, text_right - text_x)
+                text_x = note_x + 2
+            text_width = max(0, text_right - text_x)
+            label = self._truncate(task.text, text_width, i == 0)
             c.create_text(
                 text_x,
                 y0 + _ROW_HEIGHT // 2,
-                text=task.text,
+                text=label,
                 anchor=tk.W,
                 font=font,
                 fill=t.fg,
-                width=text_width,
             )
 
             if i == 0:
