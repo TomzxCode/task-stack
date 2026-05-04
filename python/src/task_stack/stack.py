@@ -348,6 +348,27 @@ def remove(idx: int) -> list[Task]:
     return _commit(active)
 
 
+def remove_many(indices: set[int]) -> list[Task]:
+    """Remove multiple tasks atomically, soft-deleting each."""
+    now = datetime.now().astimezone()
+    active = _load_active()
+    valid = sorted((i for i in indices if 0 <= i < len(active)), reverse=True)
+    if not valid:
+        return active
+    had_current_removed = 0 in indices
+    removed_tasks: list[Task] = []
+    for idx in valid:
+        task = active.pop(idx)
+        if idx == 0:
+            task.end_current_stint(now)
+        task.deleted_at = now
+        removed_tasks.append(task)
+    _save_history(_load_history() + removed_tasks)
+    if had_current_removed and active:
+        active[0].mark_current(now)
+    return _commit(active)
+
+
 def format_timestamp(dt: datetime | None, now: datetime | None = None) -> str:
     if dt is None:
         return "—"

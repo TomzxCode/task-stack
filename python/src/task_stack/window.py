@@ -157,6 +157,38 @@ def _watch_windows_theme(callback: Callable[[], None], stop: threading.Event) ->
         pass
 
 
+def _keycode_digit(keycode: int) -> int | None:
+    """Return 0-9 if keycode is a main-row or numpad digit key, else None.
+
+    Keycodes are OS-level and unaffected by modifier keys like Shift, so
+    this correctly identifies digit intent even when Shift turns '4' into '$'.
+    Main row: 48-57 (Windows/Linux/macOS all agree).
+    Numpad:   96-105 on Windows/Linux; 82-91 on macOS.
+    """
+    if 48 <= keycode <= 57:
+        return keycode - 48
+    if 96 <= keycode <= 105:
+        return keycode - 96
+    if 82 <= keycode <= 91:  # macOS numpad
+        return keycode - 82
+    return None
+
+
+_WIN_SHIFTED_NUMPAD: dict[int, int] = {
+    45: 0, 35: 1, 40: 2, 34: 3, 37: 4,
+    12: 5, 39: 6, 36: 7, 38: 8, 33: 9,
+}
+
+
+def _keysym_digit(keysym: str) -> int | None:
+    """Return 0-9 if keysym names a digit key (after Shift-normalization), else None."""
+    if keysym.isdigit():
+        return int(keysym)
+    if keysym.startswith("KP_") and keysym[3:].isdigit():
+        return int(keysym[3:])
+    return None
+
+
 _EMOJI_CACHE: dict[str, ImageTk.PhotoImage] = {}
 _ROW_HEIGHT = 28
 _DEFAULT_WIDTH = 480
@@ -194,7 +226,9 @@ class StackWindow:
         self.root = root
         self.on_stack_change = on_stack_change
         self._tasks: list[st.Task] = []
-        self._selected: int | None = None
+        self._selected: set[int] = set()
+        self._anchor: int | None = None   # fixed end of range selection
+        self._cursor: int | None = None   # moving end of range selection
         self._desc_shown_for: int | None = None
         self._editing_index: int | None = None
         self._drag_start: int | None = None
@@ -459,7 +493,9 @@ class StackWindow:
             self._tasks = tasks
         else:
             self._tasks = st.load()
-        self._selected = None
+        self._selected = set()
+        self._anchor = None
+        self._cursor = None
         self._desc_shown_for = None
         self._cancel_edit()
         self._redraw()
@@ -488,7 +524,7 @@ class StackWindow:
             y0 = i * _ROW_HEIGHT
             y1 = y0 + _ROW_HEIGHT
 
-            bg = t.selected_bg if i == self._selected else t.bg
+            bg = t.selected_bg if i in self._selected else t.bg
             c.create_rectangle(0, y0, width, y1, fill=bg, outline="", tags=f"row{i}")
 
             for dy in (8, 13, 18):
@@ -562,10 +598,12 @@ class StackWindow:
                 font=self._font_normal,
             )
 
-        if self._selected is not None and 0 <= self._selected < len(self._tasks):
-            self._show_desc_panel(self._selected)
-        else:
-            self._hide_desc_panel()
+        if len(self._selected) == 1:
+            (sole,) = self._selected
+            if 0 <= sole < len(self._tasks):
+                self._show_desc_panel(sole)
+                return
+        self._hide_desc_panel()
 
     # ------------------------------------------------------------------
     # Input handling
@@ -583,7 +621,9 @@ class StackWindow:
             self._entry.delete(0, tk.END)
             self._editing_index = None
             self._tasks = tasks
-            self._selected = idx if 0 <= idx < len(tasks) else None
+            self._selected = {idx} if 0 <= idx < len(tasks) else set()
+            self._anchor = idx if self._selected else None
+            self._cursor = self._anchor
             self._redraw()
             self.on_stack_change()
             self._canvas.focus_set()
@@ -598,7 +638,9 @@ class StackWindow:
         else:
             tasks = st.push(text)
         self._tasks = tasks
-        self._selected = None
+        self._selected = set()
+        self._anchor = None
+        self._cursor = None
         self._redraw()
         self.on_stack_change()
         self._canvas.focus_set()
@@ -607,7 +649,9 @@ class StackWindow:
         if not (0 <= idx < len(self._tasks)):
             return
         self._editing_index = idx
-        self._selected = idx
+        self._selected = {idx}
+        self._anchor = idx
+        self._cursor = idx
         self._entry.delete(0, tk.END)
         self._entry.insert(0, self._tasks[idx].text)
         self._entry.focus_set()
@@ -646,12 +690,15 @@ class StackWindow:
         self._desc_frame.pack_forget()
 
     def _save_desc(self) -> None:
-        if self._selected is None or not (0 <= self._selected < len(self._tasks)):
+        if len(self._selected) != 1:
+            return
+        (sole,) = self._selected
+        if not (0 <= sole < len(self._tasks)):
             return
         if self._desc_placeholder_active:
             return
         content = self._desc_text.get("1.0", tk.END).rstrip("\n")
-        self._tasks = st.update_description(self._selected, content)
+        self._tasks = st.update_description(sole, content)
         self._desc_shown_for = None
 
     def _on_desc_focus_out(self, _event: tk.Event) -> None:
@@ -690,23 +737,59 @@ class StackWindow:
         self._canvas.focus_set()
         return "break"
 
+    # When Shift is held, numpad navigation keys report as KP_Up/KP_Down/etc.
+    # instead of KP_8/KP_2/etc. Map them back to the digit they represent.
+    _SHIFT_KP_DIGIT: dict[str, str] = {
+        # KP_ keysyms (Num Lock on, some platforms)
+        "KP_Insert": "KP_0",
+        "KP_End": "KP_1",
+        "KP_Down": "KP_2",
+        "KP_Next": "KP_3",
+        "KP_Left": "KP_4",
+        "KP_Begin": "KP_5",
+        "KP_Right": "KP_6",
+        "KP_Home": "KP_7",
+        "KP_Up": "KP_8",
+        "KP_Prior": "KP_9",
+    }
+
     def _on_key(self, event: tk.Event) -> None:
         if event.widget is self._entry:
             return
 
+        # Normalize Shift+numpad nav keys to their digit keysym equivalents.
+        # Check Num Lock bit (0x0008) to distinguish numpad from real arrow/nav keys.
+        _numlock = bool(event.state & 0x0008)
+        if event.state & 0x0001 and _numlock and event.keysym in self._SHIFT_KP_DIGIT:
+            event.keysym = self._SHIFT_KP_DIGIT[event.keysym]
+
         if event.keysym in ("Return", "KP_Enter"):
-            if self._selected is not None:
-                self._begin_edit(self._selected)
+            if len(self._selected) == 1:
+                (sole,) = self._selected
+                self._begin_edit(sole)
             return
 
-        # Digit keys (main row and numpad) select a row
-        if event.keysym.isdigit() or (
-            event.keysym.startswith("KP_") and event.keysym[3:].isdigit()
-        ):
-            digit = int(event.keysym[-1])
+        # Digit keys select a row. Try keycode first (immune to Shift on main row),
+        # then the Windows-shifted-numpad table (Num Lock on, Shift stripped by OS),
+        # then fall back to keysym (which has already been Shift-normalized for numpad).
+        _kc = _keycode_digit(event.keycode)
+        _win_kp = _WIN_SHIFTED_NUMPAD.get(event.keycode) if _numlock else None
+        digit = _kc if _kc is not None else (_win_kp if _win_kp is not None else _keysym_digit(event.keysym))
+        # Windows Shift+numpad strips the Shift bit; treat numpad nav keycodes as Shift.
+        _shift = bool(event.state & 0x0001) or _win_kp is not None
+        if digit is not None:
             if digit < len(self._tasks):
                 self._save_desc()
-                self._selected = digit
+                if _shift:  # Shift held: extend from anchor
+                    if self._anchor is None:
+                        self._anchor = digit
+                    self._cursor = digit
+                    lo, hi = min(self._anchor, self._cursor), max(self._anchor, self._cursor)
+                    self._selected = set(range(lo, hi + 1))
+                else:
+                    self._anchor = digit
+                    self._cursor = digit
+                    self._selected = {digit}
                 self._canvas.focus_set()
                 self._redraw()
             return
@@ -724,51 +807,92 @@ class StackWindow:
 
         if event.keysym in ("Up", "Down"):
             self._save_desc()
-            if self._selected is None:
-                self._selected = 0 if event.keysym == "Down" else len(self._tasks) - 1
+            delta = -1 if event.keysym == "Up" else 1
+            if event.state & 0x0001:  # Shift: move cursor, keep anchor fixed
+                if self._anchor is None:
+                    # Nothing selected yet — pick an edge to anchor on
+                    self._anchor = 0 if event.keysym == "Down" else len(self._tasks) - 1
+                    self._cursor = self._anchor
+                cursor_pos = self._cursor if self._cursor is not None else self._anchor
+                new_cursor = max(0, min(len(self._tasks) - 1, cursor_pos + delta))
+                self._cursor = new_cursor
+                lo, hi = min(self._anchor, self._cursor), max(self._anchor, self._cursor)
+                self._selected = set(range(lo, hi + 1))
             else:
-                delta = -1 if event.keysym == "Up" else 1
-                self._selected = max(0, min(len(self._tasks) - 1, self._selected + delta))
+                # Plain Up/Down: move single selection
+                if not self._selected:
+                    pos = 0 if event.keysym == "Down" else len(self._tasks) - 1
+                else:
+                    cur = self._cursor if self._cursor is not None else min(self._selected)
+                    pos = max(0, min(len(self._tasks) - 1, cur + delta))
+                self._anchor = pos
+                self._cursor = pos
+                self._selected = {pos}
             self._canvas.focus_set()
             self._redraw()
             return
 
-        if self._selected is None:
+        if not self._selected:
             return
 
+        # Single-selection-only operations: require exactly one selected row
+        sole: int | None = None
+        if len(self._selected) == 1:
+            (sole,) = self._selected
+
         if event.keysym in ("Left", "Right"):
+            if sole is None:
+                return
             delta = -1 if event.keysym == "Left" else 1
-            new_idx = self._selected + delta
+            new_idx = sole + delta
             if 0 <= new_idx < len(self._tasks):
                 self._cancel_edit()
-                self._tasks = st.reorder(self._selected, new_idx)
-                self._selected = new_idx
+                self._tasks = st.reorder(sole, new_idx)
+                self._selected = {new_idx}
+                self._anchor = new_idx
+                self._cursor = new_idx
                 self._redraw()
                 self.on_stack_change()
             return
 
         if event.keysym == "Home":
+            if sole is None:
+                return
             self._cancel_edit()
-            tasks = st.promote(self._selected)
+            tasks = st.promote(sole)
             self._tasks = tasks
-            self._selected = None
+            self._selected = set()
+            self._anchor = None
+            self._cursor = None
             self._redraw()
             self.on_stack_change()
 
         elif event.keysym == "End":
+            if sole is None:
+                return
             self._cancel_edit()
-            tasks = st.reorder(self._selected, len(self._tasks) - 1)
+            tasks = st.reorder(sole, len(self._tasks) - 1)
             self._tasks = tasks
-            self._selected = None
+            self._selected = set()
+            self._anchor = None
+            self._cursor = None
             self._redraw()
             self.on_stack_change()
 
         elif event.keysym in ("BackSpace", "Delete"):
             self._cancel_edit()
-            deleted_idx = self._selected
-            tasks = st.remove(deleted_idx)
+            min_deleted = min(self._selected)
+            tasks = st.remove_many(self._selected)
             self._tasks = tasks
-            self._selected = min(deleted_idx, len(tasks) - 1) if tasks else None
+            if tasks:
+                next_sel = min(min_deleted, len(tasks) - 1)
+                self._selected = {next_sel}
+                self._anchor = next_sel
+                self._cursor = next_sel
+            else:
+                self._selected = set()
+                self._anchor = None
+                self._cursor = None
             self._redraw()
             self.on_stack_change()
 
@@ -799,11 +923,13 @@ class StackWindow:
             ("Home", "Add task to top  /  Promote selected to top"),
             ("End", "Add task to bottom  /  Send selected to bottom"),
             ("0-9", "Select task by index"),
+            ("Shift+0-9 / Shift+↑↓", "Extend selection (range)"),
+            ("Shift+click", "Extend selection to clicked row"),
             ("Up / Down", "Move selection"),
             ("Left / Right", "Move selected task up / down one position"),
             ("Return", "Edit selected task"),
             ("Escape", "Cancel edit  /  Hide window"),
-            ("Backspace / Del", "Delete selected task"),
+            ("Backspace / Del", "Delete selected task(s)"),
             ("?", "Show this help"),
         ]
 
@@ -885,6 +1011,15 @@ class StackWindow:
         if self._drag_start is not None:
             released_row = self._row_at(event.y)
             if released_row == self._row_at(self._drag_y0):
-                self._selected = released_row
+                if event.state & 0x0001:  # Shift+click: extend selection from anchor
+                    if self._anchor is None:
+                        self._anchor = released_row
+                    self._cursor = released_row
+                    lo, hi = min(self._anchor, self._cursor), max(self._anchor, self._cursor)
+                    self._selected = set(range(lo, hi + 1))
+                else:
+                    self._anchor = released_row
+                    self._cursor = released_row
+                    self._selected = {released_row}
                 self._redraw()
         self._drag_start = None
