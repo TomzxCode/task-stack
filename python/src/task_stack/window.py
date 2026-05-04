@@ -174,6 +174,19 @@ def _keycode_digit(keycode: int) -> int | None:
     return None
 
 
+# On Windows with Num Lock on, Shift+numpad strips the Shift bit and remaps
+# the keycode to the nav-key equivalent. The extended-key bit (0x40000) is set
+# for real nav keys but NOT for numpad keys, making them distinguishable.
+#   numpad 0 → VK_INSERT (45)
+#   numpad 1 → VK_END    (35)
+#   numpad 2 → VK_DOWN   (40)
+#   numpad 3 → VK_NEXT   (34)
+#   numpad 4 → VK_LEFT   (37)
+#   numpad 5 → VK_CLEAR  (12)
+#   numpad 6 → VK_RIGHT  (39)
+#   numpad 7 → VK_HOME   (36)
+#   numpad 8 → VK_UP     (38)
+#   numpad 9 → VK_PRIOR  (33)
 _WIN_SHIFTED_NUMPAD: dict[int, int] = {
     45: 0, 35: 1, 40: 2, 34: 3, 37: 4,
     12: 5, 39: 6, 36: 7, 38: 8, 33: 9,
@@ -770,13 +783,17 @@ class StackWindow:
             return
 
         # Digit keys select a row. Try keycode first (immune to Shift on main row),
-        # then the Windows-shifted-numpad table (Num Lock on, Shift stripped by OS),
-        # then fall back to keysym (which has already been Shift-normalized for numpad).
+        # then the Win-shifted-numpad table for unambiguous nav keycodes (Num Lock on,
+        # Shift stripped by OS), then fall back to keysym for KP_ numpad keys.
+        _shift_bit = bool(event.state & 0x0001)
         _kc = _keycode_digit(event.keycode)
-        _win_kp = _WIN_SHIFTED_NUMPAD.get(event.keycode) if _numlock else None
+        # Win-shifted-numpad: Num Lock on, Shift bit absent (stripped by OS),
+        # and extended-key bit (0x40000) absent (real nav keys always have it).
+        _extended = bool(event.state & 0x40000)
+        _win_kp = _WIN_SHIFTED_NUMPAD.get(event.keycode) if (_numlock and not _shift_bit and not _extended) else None
         digit = _kc if _kc is not None else (_win_kp if _win_kp is not None else _keysym_digit(event.keysym))
-        # Windows Shift+numpad strips the Shift bit; treat numpad nav keycodes as Shift.
-        _shift = bool(event.state & 0x0001) or _win_kp is not None
+        # Treat unambiguous Win-shifted-numpad hits as Shift (the bit was stripped by OS).
+        _shift = _shift_bit or _win_kp is not None
         if digit is not None:
             if digit < len(self._tasks):
                 self._save_desc()
