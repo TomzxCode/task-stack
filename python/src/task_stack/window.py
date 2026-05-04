@@ -169,7 +169,7 @@ def _keycode_digit(keycode: int) -> int | None:
         return keycode - 48
     if 96 <= keycode <= 105:
         return keycode - 96
-    if 82 <= keycode <= 91:  # macOS numpad
+    if platform.system() == "Darwin" and 82 <= keycode <= 91:  # macOS numpad only
         return keycode - 82
     return None
 
