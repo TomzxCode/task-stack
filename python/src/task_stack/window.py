@@ -240,6 +240,7 @@ class StackWindow:
         self.on_stack_change = on_stack_change
         self._tasks: list[st.Task] = []
         self._selected: set[int] = set()
+        self._last_selected: frozenset[int] = frozenset()
         self._anchor: int | None = None   # fixed end of range selection
         self._cursor: int | None = None   # moving end of range selection
         self._desc_shown_for: int | None = None
@@ -627,6 +628,18 @@ class StackWindow:
                 font=self._font_normal,
             )
 
+        current = frozenset(self._selected)
+        if current != self._last_selected:
+            self._last_selected = current
+            if len(self._selected) == 1:
+                (sole,) = self._selected
+                if 0 <= sole < len(self._tasks) and self._editing_index is None:
+                    self._entry.delete(0, tk.END)
+                    self._entry.insert(0, self._tasks[sole].text)
+                    self._entry.select_range(0, tk.END)
+            elif self._editing_index is None:
+                self._entry.delete(0, tk.END)
+
         if len(self._selected) == 1:
             (sole,) = self._selected
             if 0 <= sole < len(self._tasks):
@@ -640,17 +653,22 @@ class StackWindow:
 
     def _submit_entry(self, *, position: _InsertPosition = _InsertPosition.FIRST) -> None:
         text = self._entry.get().strip()
-        if self._editing_index is not None:
-            idx = self._editing_index
+        edit_idx = self._editing_index
+        if edit_idx is None and len(self._selected) == 1:
+            (sole,) = self._selected
+            if 0 <= sole < len(self._tasks):
+                edit_idx = sole
+        if edit_idx is not None:
+            idx = edit_idx
             if not text:
                 self._cancel_edit()
                 self._redraw()
                 return
             tasks = st.update_text(idx, text)
-            self._entry.delete(0, tk.END)
             self._editing_index = None
             self._tasks = tasks
             self._selected = {idx} if 0 <= idx < len(tasks) else set()
+            self._last_selected = frozenset(self._selected)
             self._anchor = idx if self._selected else None
             self._cursor = self._anchor
             self._redraw()
@@ -794,8 +812,9 @@ class StackWindow:
 
         if event.keysym in ("Return", "KP_Enter"):
             if len(self._selected) == 1:
-                (sole,) = self._selected
-                self._begin_edit(sole)
+                self._entry.focus_set()
+                self._entry.select_range(0, tk.END)
+                self._entry.icursor(tk.END)
             return
 
         # Digit keys select a row. Try keycode first (immune to Shift on main row),
@@ -834,6 +853,7 @@ class StackWindow:
         # Printable character: redirect to entry and let the user type
         if event.char and event.char.isprintable():
             self._cancel_edit()
+            self._entry.delete(0, tk.END)
             self._entry.focus_set()
             self._entry.insert(tk.END, event.char)
             return
