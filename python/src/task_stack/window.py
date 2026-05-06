@@ -737,15 +737,18 @@ class StackWindow:
         self._desc_frame.pack_forget()
 
     def _save_desc(self) -> None:
-        if len(self._selected) != 1:
+        # Save to whichever task the description panel is currently bound to,
+        # not the current selection — selection/index can shift (e.g. during a
+        # drag-reorder) while the panel still displays the original task's text.
+        idx = self._desc_shown_for
+        if idx is None:
             return
-        (sole,) = self._selected
-        if not (0 <= sole < len(self._tasks)):
+        if not (0 <= idx < len(self._tasks)):
             return
         if self._desc_placeholder_active:
             return
         content = self._desc_text.get("1.0", tk.END).rstrip("\n")
-        self._tasks = st.update_description(sole, content)
+        self._tasks = st.update_description(idx, content)
         self._desc_shown_for = None
 
     def _on_desc_focus_out(self, _event: tk.Event) -> None:
@@ -1053,12 +1056,36 @@ class StackWindow:
         if self._drag_start is None or len(self._tasks) < 2:
             return
         target = self._row_at(event.y)
-        if target != self._drag_start:
-            self._cancel_edit()
-            self._tasks = st.reorder(self._drag_start, target)
-            self._drag_start = target
-            self._redraw()
-            self.on_stack_change()
+        if target == self._drag_start:
+            return
+        self._cancel_edit()
+        src = self._drag_start
+        # If the dragged row is part of a multi-selection, the entire selected
+        # block moves together (preserving the rows' relative order). Otherwise
+        # only the dragged row moves. Either way ``reorder_group`` returns an
+        # index map that we use to translate every tracked index (selection,
+        # anchor, cursor, description binding) through the reorder, so they
+        # keep pointing at the same tasks they pointed at before.
+        if src in self._selected and len(self._selected) > 1:
+            group = set(self._selected)
+        else:
+            group = {src}
+        self._tasks, index_map = st.reorder_group(group, src, target)
+
+        def remap(i: int) -> int:
+            return index_map.get(i, i)
+
+        self._selected = {remap(i) for i in self._selected}
+        self._anchor = remap(self._anchor) if self._anchor is not None else None
+        self._cursor = remap(self._cursor) if self._cursor is not None else None
+        self._desc_shown_for = (
+            remap(self._desc_shown_for) if self._desc_shown_for is not None else None
+        )
+        self._last_selected = frozenset(self._selected)
+        new_src = index_map.get(src, src)
+        self._drag_start = new_src
+        self._redraw()
+        self.on_stack_change()
 
     def _drag_release(self, event: tk.Event) -> None:
         if self._drag_start is not None:

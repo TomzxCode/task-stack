@@ -308,6 +308,59 @@ def promote(idx: int) -> list[Task]:
     return reorder(idx, 0)
 
 
+def reorder_group(
+    from_indices: set[int], anchor_idx: int, target_idx: int
+) -> tuple[list[Task], dict[int, int]]:
+    """Move a group of tasks together, keeping their relative order.
+
+    ``from_indices`` is the set of source indices to move as a block.
+    ``anchor_idx`` is the index of the row the user is grabbing (must be in
+    ``from_indices``); after the move, the anchor task lands at ``target_idx``
+    and the rest of the block packs around it in their original order.
+
+    Returns the new active list along with a mapping from every old index in
+    the active list to its new index, so callers can translate any other
+    indices they track (selection, cursor, …) without re-deriving the math.
+    """
+    now = datetime.now().astimezone()
+    active = _load_active()
+    n = len(active)
+    valid = {i for i in from_indices if 0 <= i < n}
+    if not valid or anchor_idx not in valid or not (0 <= target_idx < n):
+        return active, {i: i for i in range(n)}
+
+    block_indices = sorted(valid)
+    block = [active[i] for i in block_indices]
+    anchor_task = active[anchor_idx]
+    anchor_offset = block.index(anchor_task)
+
+    remaining_indices = [i for i in range(n) if i not in valid]
+    remaining = [active[i] for i in remaining_indices]
+
+    insert_at = max(0, min(len(remaining), target_idx - anchor_offset))
+
+    new_active = remaining[:insert_at] + block + remaining[insert_at:]
+    if new_active == active:
+        return active, {i: i for i in range(n)}
+
+    new_index: dict[int, int] = {}
+    for offset, task in enumerate(block):
+        new_index[block_indices[offset]] = insert_at + offset
+    for offset, old_idx in enumerate(remaining_indices):
+        if offset < insert_at:
+            new_index[old_idx] = offset
+        else:
+            new_index[old_idx] = offset + len(block)
+
+    old_head = active[0]
+    new_head = new_active[0]
+    if new_head is not old_head:
+        old_head.end_current_stint(now)
+        new_head.mark_current(now)
+
+    return _commit(new_active), new_index
+
+
 def update_text(idx: int, text: str) -> list[Task]:
     """Update the text of the active task at ``idx`` in place.
 
