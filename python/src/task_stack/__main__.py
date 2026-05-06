@@ -38,12 +38,17 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, _sigint)
 
-    def _poll_signals() -> None:
-        root.after(200, _poll_signals)
-
-    root.after(200, _poll_signals)
-
     coordinator: AppCoordinator | None = None
+
+    def _tick() -> None:
+        # Runs on the Tk main thread. Drains messages enqueued by background
+        # threads (tray, hotkey listener) and keeps the interpreter responsive
+        # to signals like SIGINT.
+        if coordinator is not None:
+            coordinator.poll_pending()
+        root.after(50, _tick)
+
+    root.after(50, _tick)
 
     def on_stack_change() -> None:
         if coordinator:
@@ -52,12 +57,12 @@ def main() -> None:
     win = StackWindow(root, on_stack_change=on_stack_change)
 
     coordinator = AppCoordinator(
-        tk_after=root.after,
         tk_quit=root.quit,
         window_show=win.show,
         window_hide=win.hide,
         window_refresh=win.refresh,
         window_is_visible=win.is_visible,
+        window_show_help=win.show_help,
     )
 
     settings = cfg.load()
@@ -74,7 +79,7 @@ def main() -> None:
         on_open=coordinator.request_show,
         on_quit=coordinator.request_quit,
         hotkey_label=hotkey_spec.pretty,
-        on_help=lambda: root.after(0, win.show_help),
+        on_help=coordinator.request_help,
     )
     coordinator.set_tray(tray)
 

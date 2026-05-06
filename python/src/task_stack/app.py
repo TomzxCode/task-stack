@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import queue
+import subprocess
 import sys
+import threading
 from typing import Callable
 
 import pystray
@@ -99,6 +101,13 @@ class TrayApp:
 class HotkeyListener:
     """Global hotkey listener configured from `Settings.hotkey`.
 
+    On macOS, the listener runs in a dedicated subprocess (see
+    `task_stack._hotkey_subprocess`). Running pynput's CFRunLoop-based listener
+    in the same process as Tk's `mainloop` on Python 3.14 reliably crashes with
+    "PyEval_RestoreThread: ... GIL is released" — see pynput issues #366 / #511.
+    Isolating it in a subprocess removes the offending interaction entirely.
+
+    On other platforms, the listener runs in-process on a background thread.
     Matches by `KeyCode.char` AND by `KeyCode.vk` so combos like Ctrl+Shift+T
     keep working on macOS, where Ctrl masks the character translation.
     """
@@ -113,6 +122,8 @@ class HotkeyListener:
             spec = hk.parse_or_default(cfg.load().hotkey, cfg.DEFAULT_HOTKEY)
         self._spec = spec
         self._listener: keyboard.Listener | None = None
+        self._proc: subprocess.Popen[str] | None = None
+        self._reader: threading.Thread | None = None
         self._held: dict[str, bool] = {"ctrl": False, "shift": False, "alt": False, "cmd": False}
 
     @property
@@ -120,21 +131,113 @@ class HotkeyListener:
         return self._spec.pretty
 
     def start(self) -> None:
+        if sys.platform == "darwin":
+            self._start_subprocess()
+        else:
+            self._start_in_process()
+        if os.environ.get("TASK_STACK_DEBUG_HOTKEY"):
+            sys.stderr.write(f"[task-stack] hotkey listener registered for {self._spec.pretty}\n")
+            sys.stderr.flush()
+
+    def stop(self) -> None:
+        if self._proc is not None:
+            self._stop_subprocess()
+            return
+        listener = self._listener
+        if listener is None:
+            return
+        listener.stop()
+        if listener.is_alive():
+            try:
+                listener.join(timeout=2.0)
+            except RuntimeError:
+                pass
+        self._listener = None
+
+    # ------------------------------------------------------------------
+    # Subprocess (macOS) implementation
+    # ------------------------------------------------------------------
+
+    def _start_subprocess(self) -> None:
+        env = os.environ.copy()
+        # Ensure the child can find the task_stack package without relying on
+        # the parent's cwd. Prepending repo's src dir is unnecessary because we
+        # invoke via -m and rely on the installed entry, but keep PYTHONPATH
+        # pass-through for editable installs.
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "task_stack._hotkey_subprocess", self._spec_to_arg()],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=None,  # inherit so debug logs still surface
+            text=True,
+            bufsize=1,  # line buffered
+            env=env,
+        )
+        self._proc = proc
+        self._reader = threading.Thread(
+            target=self._read_subprocess,
+            args=(proc,),
+            name="hotkey-reader",
+            daemon=True,
+        )
+        self._reader.start()
+
+    def _spec_to_arg(self) -> str:
+        return self._spec.pretty.lower()
+
+    def _read_subprocess(self, proc: subprocess.Popen[str]) -> None:
+        stdout = proc.stdout
+        if stdout is None:
+            return
+        try:
+            for line in stdout:
+                if line.strip() != "FIRE":
+                    continue
+                try:
+                    self._callback()
+                except Exception as exc:
+                    sys.stderr.write(f"[task-stack] hotkey callback error: {exc!r}\n")
+                    sys.stderr.flush()
+        except Exception:
+            pass
+
+    def _stop_subprocess(self) -> None:
+        proc = self._proc
+        self._proc = None
+        if proc is None:
+            return
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                try:
+                    proc.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    pass
+        reader = self._reader
+        self._reader = None
+        if reader is not None and reader.is_alive():
+            reader.join(timeout=1.0)
+
+    # ------------------------------------------------------------------
+    # In-process implementation (Linux / Windows)
+    # ------------------------------------------------------------------
+
+    def _start_in_process(self) -> None:
         self._listener = keyboard.Listener(
             on_press=self._on_press,
             on_release=self._on_release,
         )
         self._listener.daemon = True
         self._listener.start()
-        if os.environ.get("TASK_STACK_DEBUG_HOTKEY"):
-            sys.stderr.write(f"[task-stack] hotkey listener registered for {self._spec.pretty}\n")
-            sys.stderr.flush()
-
-    def stop(self) -> None:
-        if self._listener:
-            self._listener.stop()
-
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _modifier_for_key(key: object) -> str | None:
@@ -172,23 +275,31 @@ class HotkeyListener:
 
 
 class AppCoordinator:
-    """Wires together the tray, hotkey listener, and tkinter window via a thread-safe queue."""
+    """Wires together the tray, hotkey listener, and tkinter window via a thread-safe queue.
+
+    Background threads (tray, hotkey listener / subprocess reader) MUST NOT call
+    Tk methods directly — Tcl/Tk is not thread-safe and on Python 3.14 + macOS
+    invoking `root.after` from a non-main thread reliably crashes with
+    "PyEval_RestoreThread: ... GIL is released". Instead, those threads only
+    enqueue messages here; the main Tk thread polls via `poll_pending` from a
+    repeating `root.after` callback.
+    """
 
     def __init__(
         self,
-        tk_after: Callable,
         tk_quit: Callable,
         window_show: Callable,
         window_hide: Callable,
         window_refresh: Callable,
         window_is_visible: Callable[[], bool],
+        window_show_help: Callable | None = None,
     ) -> None:
-        self._tk_after = tk_after
         self._tk_quit = tk_quit
         self._window_show = window_show
         self._window_hide = window_hide
         self._window_refresh = window_refresh
         self._window_is_visible = window_is_visible
+        self._window_show_help = window_show_help
         self._queue: queue.SimpleQueue = queue.SimpleQueue()
         self._tray: TrayApp | None = None
 
@@ -197,20 +308,24 @@ class AppCoordinator:
 
     def request_show(self) -> None:
         self._queue.put("show")
-        self._tk_after(0, self._drain)
 
     def request_toggle(self) -> None:
         self._queue.put("toggle")
-        self._tk_after(0, self._drain)
 
     def request_quit(self) -> None:
         self._queue.put("quit")
-        self._tk_after(0, self._drain)
+
+    def request_help(self) -> None:
+        self._queue.put("help")
 
     def notify_stack_changed(self) -> None:
-        tasks = st.load()
-        if self._tray:
-            self._tray.update(tasks)
+        # Called from background threads (tray menu callbacks). Defer all
+        # Tk-touching work to the main thread by enqueuing a marker.
+        self._queue.put("stack_changed")
+
+    def poll_pending(self) -> None:
+        """Drain pending messages. MUST be called from the Tk main thread."""
+        self._drain()
 
     def _drain(self) -> None:
         while not self._queue.empty():
@@ -224,5 +339,12 @@ class AppCoordinator:
                 else:
                     self._window_refresh()
                     self._window_show()
+            elif msg == "stack_changed":
+                tasks = st.load()
+                if self._tray:
+                    self._tray.update(tasks)
+            elif msg == "help":
+                if self._window_show_help is not None:
+                    self._window_show_help()
             elif msg == "quit":
                 self._tk_quit()
