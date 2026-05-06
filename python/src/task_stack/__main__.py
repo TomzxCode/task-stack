@@ -13,7 +13,10 @@ import tkinter as tk  # noqa: E402
 from . import hotkey as hk  # noqa: E402
 from . import settings as cfg  # noqa: E402
 from .app import AppCoordinator, HotkeyListener, TrayApp  # noqa: E402
-from .macos_permissions import ensure_hotkey_permissions  # noqa: E402
+from .macos_permissions import (  # noqa: E402
+    diagnose_hotkey_environment,
+    ensure_hotkey_permissions,
+)
 from .window import StackWindow  # noqa: E402
 
 
@@ -75,12 +78,10 @@ def main() -> None:
     )
     coordinator.set_tray(tray)
 
-    if sys.platform == "darwin" and not ensure_hotkey_permissions():
-        sys.stderr.write(
-            "task-stack: global hotkey requires Accessibility (and Input Monitoring) access.\n"
-            "Opened System Settings → Privacy & Security. Enable task-stack/your terminal,\n"
-            "then quit and relaunch task-stack.\n"
-        )
+    if sys.platform == "darwin":
+        ensure_hotkey_permissions()
+        for warning in diagnose_hotkey_environment():
+            sys.stderr.write(f"task-stack: {warning}\n")
 
     hotkey = HotkeyListener(callback=coordinator.request_toggle, spec=hotkey_spec)
     hotkey.start()

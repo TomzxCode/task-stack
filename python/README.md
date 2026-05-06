@@ -156,8 +156,27 @@ the end, each with a `deleted_at` timestamp.
   TASK_STACK_DEBUG_HOTKEY=1 uv run task-stack
   ```
 
-  If you don't see any `key press:` lines when typing, the OS hasn't granted
-  Accessibility / Input Monitoring access to the Python binary.
+  On macOS, task-stack also prints any of these warnings at startup:
+
+  - **No `key press:` lines at all** → Accessibility is not granted for the
+    Python binary. Add it in System Settings → Privacy & Security →
+    **Accessibility**.
+  - **Only modifier keys (`Ctrl`/`Shift`/`Alt`/`Cmd`) appear, never letters** →
+    Input Monitoring is not granted. Add the binary in System Settings →
+    Privacy & Security → **Input Monitoring**. Same symptom appears if the
+    Homebrew `python@3.14` formula was upgraded since you last granted access:
+    macOS keys grants by the resolved Cellar path, so re-add the new binary.
+  - **Permissions look fine but nothing fires** → check whether macOS Secure
+    Input is on. Any process can enable it (typically a hidden system auth
+    dialog from `UserNotificationCenter`); while it is on, all event taps stop
+    receiving keystrokes. Find it with:
+
+    ```bash
+    ioreg -l -w 0 | grep kCGSSessionSecureInputPID
+    ```
+
+    A non-zero PID means something is holding it. Resolve the dialog (it may
+    be on another Space) or, as a last resort, `kill <pid>`.
 
 - **Tk errors on macOS**: if you see `Can't find a usable init.tcl`, your
   Python lacks a Tk runtime. Install `python-tk@3.14` (or use Homebrew's
