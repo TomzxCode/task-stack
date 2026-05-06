@@ -340,7 +340,7 @@ class StackWindow:
         self._canvas.bind("<B1-Motion>", self._drag_motion)
         self._canvas.bind("<ButtonRelease-1>", self._drag_release)
         self._canvas.bind("<Key>", self._on_key)
-        self._canvas.bind("<Escape>", lambda _: self.hide())
+        self._canvas.bind("<Escape>", self._on_canvas_escape)
         self._canvas.bind("<Configure>", lambda _e: self._redraw())
 
         self._desc_frame = tk.Frame(self.root, bg=t.bg_frame)
@@ -778,6 +778,18 @@ class StackWindow:
 
     def _on_entry_end(self, _event: tk.Event) -> str:
         self._submit_entry(position=_InsertPosition.LAST)
+        return "break"
+
+    def _on_canvas_escape(self, _event: tk.Event) -> str:
+        if self._selected:
+            self._selected = set()
+            self._anchor = None
+            self._cursor = None
+            if self._editing_index is None:
+                self._entry.delete(0, tk.END)
+            self._redraw()
+            return "break"
+        self.hide()
         return "break"
 
     def _on_entry_escape(self, _event: tk.Event) -> str:
