@@ -210,23 +210,66 @@ _GEOMETRY_SAVE_DEBOUNCE_MS = 400
 _DURATION_TICK_MS = 1_000
 
 
+# Per-platform emoji font candidates. Each entry is (path_or_name, render_size).
+# Apple Color Emoji is a bitmap font that FreeType only loads at 160px; we
+# render at that strike then downscale. Other platforms accept arbitrary sizes,
+# so we render at a high multiple of the target for crisp downsampling.
+def _emoji_font_candidates(target_size: int) -> list[tuple[str, int]]:
+    big = target_size * 8
+    system = platform.system()
+    if system == "Darwin":
+        return [("/System/Library/Fonts/Apple Color Emoji.ttc", 160)]
+    if system == "Windows":
+        return [("seguiemj.ttf", big)]
+    return [
+        ("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", 109),
+        ("NotoColorEmoji.ttf", 109),
+        ("/usr/share/fonts/truetype/noto/NotoColorEmoji-Regular.ttf", 109),
+        ("Symbola.ttf", big),
+    ]
+
+
+_EMOJI_FONT_CACHE: dict[int, ImageFont.FreeTypeFont | ImageFont.ImageFont | None] = {}
+
+
+def _load_emoji_font(target_size: int) -> tuple[ImageFont.FreeTypeFont | ImageFont.ImageFont, int]:
+    cached = _EMOJI_FONT_CACHE.get(target_size)
+    if cached is not None:
+        font, size = cached  # type: ignore[misc]
+        return font, size
+    for path, render_size in _emoji_font_candidates(target_size):
+        try:
+            font = ImageFont.truetype(path, render_size)
+        except OSError:
+            continue
+        _EMOJI_FONT_CACHE[target_size] = (font, render_size)  # type: ignore[assignment]
+        return font, render_size
+    fallback = ImageFont.load_default()
+    _EMOJI_FONT_CACHE[target_size] = (fallback, target_size)  # type: ignore[assignment]
+    return fallback, target_size
+
+
 def _emoji_image(emoji: str, size: int = 18) -> ImageTk.PhotoImage:
     if emoji in _EMOJI_CACHE:
         return _EMOJI_CACHE[emoji]
-    scale = 4
-    render_size = size * scale
-    try:
-        font = ImageFont.truetype("seguiemj.ttf", render_size)
-    except OSError:
-        font = ImageFont.load_default()
-    canvas_size = render_size * 3
+    font, render_size = _load_emoji_font(size)
+    canvas_size = max(render_size * 3, size * 3)
     img = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    draw.text((render_size // 2, render_size // 2), emoji, font=font, embedded_color=True)
+    try:
+        draw.text(
+            (render_size // 2, render_size // 2),
+            emoji,
+            font=font,
+            embedded_color=True,
+        )
+    except OSError:
+        draw.text((render_size // 2, render_size // 2), emoji, font=font)
     bbox = img.getbbox()
     if bbox:
         img = img.crop(bbox)
-        img = img.resize((size, size), Image.LANCZOS)
+        if img.size != (size, size):
+            img = img.resize((size, size), Image.LANCZOS)
     else:
         img = img.crop((0, 0, size, size))
     photo = ImageTk.PhotoImage(img)
