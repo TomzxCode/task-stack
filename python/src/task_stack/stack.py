@@ -22,6 +22,7 @@ class Task:
     duration: float = field(default=0.0)
     deleted_at: datetime | None = field(default=None)
     description: str = field(default="")
+    execution_count: int = field(default=0)
 
     @property
     def is_deleted(self) -> bool:
@@ -34,6 +35,7 @@ class Task:
         if self.started_at is None:
             self.started_at = now
         self.last_current = now
+        self.execution_count += 1
 
     def end_current_stint(self, now: datetime | None = None) -> None:
         """Accumulate the live stint into ``duration``.
@@ -79,6 +81,8 @@ class Task:
             d["deleted_at"] = self.deleted_at.isoformat()
         if self.description:
             d["description"] = self.description
+        if self.execution_count:
+            d["execution_count"] = self.execution_count
         return d
 
     @staticmethod
@@ -100,6 +104,7 @@ class Task:
             duration=duration,
             deleted_at=_parse(d.get("deleted_at")),
             description=d.get("description") or "",
+            execution_count=int(d.get("execution_count") or 0),
         )
 
 

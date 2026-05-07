@@ -353,6 +353,7 @@ class StackWindow:
         self._ts_col_w = f.measure("00m ago") + 8
         self._lc_col_w = f.measure("00m ago") + 8
         self._idx_col_w = f.measure("999") + 4
+        self._exec_col_w = f.measure("×99") + 4
 
     def _truncate(self, text: str, max_px: int, is_current: bool) -> str:
         font = self._font_obj_current if is_current else self._font_obj_normal
@@ -628,7 +629,8 @@ class StackWindow:
         dur_x = width - right_pad
         lc_x = dur_x - self._dur_col_w - gap
         ts_x = lc_x - self._lc_col_w - gap
-        text_right = ts_x - self._ts_col_w - gap
+        exec_x = ts_x - self._ts_col_w - gap
+        text_right = exec_x - self._exec_col_w - gap
 
         if self._filter_text:
             self._visible_indices = [
@@ -685,6 +687,15 @@ class StackWindow:
                 ts_text = st.format_timestamp(task.started_at, now)
                 dur_seconds = task.duration
                 col_fill = t.fg_muted
+            exec_text = f"×{task.execution_count}" if task.execution_count else "—"
+            c.create_text(
+                exec_x,
+                y0 + _ROW_HEIGHT // 2,
+                text=exec_text,
+                anchor=tk.E,
+                font=self._font_normal,
+                fill=col_fill,
+            )
             c.create_text(
                 ts_x,
                 y0 + _ROW_HEIGHT // 2,
