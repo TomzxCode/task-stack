@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import platform
+import re
 import threading
 import tkinter as tk
 import tkinter.font as tkFont
+import webbrowser
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Callable
+
+_URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
 
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
@@ -39,6 +43,7 @@ class _Theme:
     btn_bg: str
     btn_fg: str
     btn_active_bg: str
+    link_fg: str
 
 
 _LIGHT = _Theme(
@@ -58,6 +63,7 @@ _LIGHT = _Theme(
     btn_bg="#4a90e2",
     btn_fg="white",
     btn_active_bg="#357abd",
+    link_fg="#1a6ed8",
 )
 
 _DARK = _Theme(
@@ -77,6 +83,7 @@ _DARK = _Theme(
     btn_bg="#2a6099",
     btn_fg="#e0e0e0",
     btn_active_bg="#1f4d7a",
+    link_fg="#6ea8fe",
 )
 
 _THEME_POLL_MS = 30_000  # macOS fallback only
@@ -425,8 +432,17 @@ class StackWindow:
         self._desc_text.bind("<FocusOut>", self._on_desc_focus_out)
         self._desc_text.bind("<FocusIn>", self._on_desc_focus_in)
         self._desc_text.bind("<Escape>", self._on_desc_escape)
+        self._desc_text.bind("<KeyRelease>", self._on_desc_key_release)
         self._desc_placeholder_active = False
         self._desc_frame.pack_forget()
+
+        self._desc_text.tag_configure("link", foreground=t.link_fg, underline=True)
+        self._desc_text.tag_bind("link", "<Enter>", self._on_link_enter)
+        self._desc_text.tag_bind("link", "<Leave>", self._on_link_leave)
+        # Cmd-click on macOS, Ctrl-click elsewhere — avoids fighting the text
+        # cursor placement on plain clicks while editing.
+        click_seq = "<Command-Button-1>" if platform.system() == "Darwin" else "<Control-Button-1>"
+        self._desc_text.tag_bind("link", click_seq, self._on_link_click)
 
     # ------------------------------------------------------------------
     # Public API
@@ -550,6 +566,7 @@ class StackWindow:
             highlightbackground=t.entry_highlight_bg,
             highlightcolor=t.entry_highlight_active,
         )
+        self._desc_text.tag_configure("link", foreground=t.link_fg, underline=True)
         self._redraw()
 
     def _capture_geometry(self) -> None:
@@ -807,6 +824,7 @@ class StackWindow:
             self._desc_text.configure(fg=t.entry_fg)
             self._desc_text.insert("1.0", task.description)
             self._desc_placeholder_active = False
+            self._highlight_links()
         else:
             self._desc_text.configure(fg=t.fg_muted)
             self._desc_text.insert("1.0", "Add a description…")
@@ -847,6 +865,46 @@ class StackWindow:
             self._desc_text.delete("1.0", tk.END)
             self._desc_text.configure(fg=self._theme.entry_fg)
             self._desc_placeholder_active = False
+
+    def _on_desc_key_release(self, _event: tk.Event) -> None:
+        if self._desc_placeholder_active:
+            return
+        self._highlight_links()
+
+    def _highlight_links(self) -> None:
+        text_widget = self._desc_text
+        text_widget.tag_remove("link", "1.0", tk.END)
+        content = text_widget.get("1.0", "end-1c")
+        for match in _URL_RE.finditer(content):
+            start = f"1.0+{match.start()}c"
+            end = f"1.0+{match.end()}c"
+            text_widget.tag_add("link", start, end)
+
+    def _url_at_event(self, event: tk.Event) -> str | None:
+        index = self._desc_text.index(f"@{event.x},{event.y}")
+        ranges = self._desc_text.tag_ranges("link")
+        for i in range(0, len(ranges), 2):
+            start, end = ranges[i], ranges[i + 1]
+            if self._desc_text.compare(start, "<=", index) and self._desc_text.compare(
+                index, "<", end
+            ):
+                return self._desc_text.get(start, end)
+        return None
+
+    def _on_link_enter(self, _event: tk.Event) -> None:
+        self._desc_text.configure(cursor="hand2")
+
+    def _on_link_leave(self, _event: tk.Event) -> None:
+        self._desc_text.configure(cursor="xterm")
+
+    def _on_link_click(self, event: tk.Event) -> str:
+        url = self._url_at_event(event)
+        if url:
+            try:
+                webbrowser.open(url)
+            except Exception:
+                pass
+        return "break"
 
     def _on_enter(self, _event: tk.Event) -> None:
         self._submit_entry(position=_InsertPosition.FIRST)
