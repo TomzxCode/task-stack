@@ -277,6 +277,21 @@ def _emoji_image(emoji: str, size: int = 18) -> ImageTk.PhotoImage:
     return photo
 
 
+def _fuzzy_match(query: str, text: str) -> bool:
+    """Return True if all chars of query appear in text in order (case-insensitive)."""
+    if not query:
+        return True
+    q = query.lower()
+    t = text.lower()
+    i = 0
+    for ch in t:
+        if ch == q[i]:
+            i += 1
+            if i == len(q):
+                return True
+    return False
+
+
 class StackWindow:
     def __init__(self, root: tk.Tk, on_stack_change: Callable[[], None]) -> None:
         self.root = root
@@ -290,6 +305,8 @@ class StackWindow:
         self._editing_index: int | None = None
         self._drag_start: int | None = None
         self._drag_y0: int = 0
+        self._filter_text: str = ""
+        self._visible_indices: list[int] = []
 
         root.title("Task Stack")
         root.resizable(True, True)
@@ -372,6 +389,7 @@ class StackWindow:
         self._entry.bind("<Home>", self._on_entry_home)
         self._entry.bind("<End>", self._on_entry_end)
         self._entry.bind("<Escape>", self._on_entry_escape)
+        self._entry.bind("<KeyRelease>", self._on_entry_key_release)
 
         self._canvas = tk.Canvas(
             self.root, bg=t.bg, highlightthickness=0, width=460, height=_ROW_HEIGHT
@@ -569,6 +587,8 @@ class StackWindow:
         self._cursor = None
         self._desc_shown_for = None
         self._cancel_edit()
+        self._filter_text = ""
+        self._entry.delete(0, tk.END)
         self._redraw()
 
     # ------------------------------------------------------------------
@@ -591,8 +611,17 @@ class StackWindow:
         ts_x = lc_x - self._lc_col_w - gap
         text_right = ts_x - self._ts_col_w - gap
 
-        for i, task in enumerate(self._tasks):
-            y0 = i * _ROW_HEIGHT
+        if self._filter_text:
+            self._visible_indices = [
+                idx for idx, task in enumerate(self._tasks)
+                if _fuzzy_match(self._filter_text, task.text)
+            ]
+        else:
+            self._visible_indices = list(range(len(self._tasks)))
+
+        for row, i in enumerate(self._visible_indices):
+            task = self._tasks[i]
+            y0 = row * _ROW_HEIGHT
             y1 = y0 + _ROW_HEIGHT
 
             bg = t.selected_bg if i in self._selected else t.bg
@@ -670,6 +699,14 @@ class StackWindow:
                 fill=t.fg_muted,
                 font=self._font_normal,
             )
+        elif not self._visible_indices:
+            c.create_text(
+                width // 2,
+                _ROW_HEIGHT // 2,
+                text="No matching tasks",
+                fill=t.fg_muted,
+                font=self._font_normal,
+            )
 
         current = frozenset(self._selected)
         if current != self._last_selected:
@@ -680,8 +717,10 @@ class StackWindow:
                     self._entry.delete(0, tk.END)
                     self._entry.insert(0, self._tasks[sole].text)
                     self._entry.select_range(0, tk.END)
+                    self._filter_text = ""
             elif self._editing_index is None:
                 self._entry.delete(0, tk.END)
+                self._filter_text = ""
 
         if len(self._selected) == 1:
             (sole,) = self._selected
@@ -721,6 +760,7 @@ class StackWindow:
         if not text:
             return
         self._entry.delete(0, tk.END)
+        self._filter_text = ""
         if position == _InsertPosition.NEXT:
             tasks = st.push_next(text)
         elif position == _InsertPosition.LAST:
@@ -824,23 +864,53 @@ class StackWindow:
         return "break"
 
     def _on_canvas_escape(self, _event: tk.Event) -> str:
-        if self._selected:
+        if self._selected or self._filter_text:
             self._selected = set()
             self._anchor = None
             self._cursor = None
             if self._editing_index is None:
                 self._entry.delete(0, tk.END)
+                self._filter_text = ""
             self._redraw()
             return "break"
         self.hide()
         return "break"
 
     def _on_entry_escape(self, _event: tk.Event) -> str:
-        if self._editing_index is not None:
+        if self._entry.get():
             self._cancel_edit()
+            self._entry.delete(0, tk.END)
+            self._filter_text = ""
+            self._selected = set()
+            self._anchor = None
+            self._cursor = None
+            self._last_selected = frozenset()
             self._redraw()
+            return "break"
         self._canvas.focus_set()
         return "break"
+
+    _FILTER_IGNORED_KEYSYMS = frozenset({
+        "Return", "KP_Enter", "Escape", "Up", "Down", "Left", "Right",
+        "Home", "End", "Prior", "Next", "Tab", "ISO_Left_Tab",
+        "Shift_L", "Shift_R", "Control_L", "Control_R",
+        "Alt_L", "Alt_R", "Meta_L", "Meta_R", "Super_L", "Super_R",
+        "Caps_Lock", "Num_Lock", "Scroll_Lock",
+    })
+
+    def _on_entry_key_release(self, event: tk.Event) -> None:
+        if event.keysym in self._FILTER_IGNORED_KEYSYMS:
+            return
+        new_text = self._entry.get()
+        if new_text == self._filter_text and self._editing_index is None:
+            return
+        self._filter_text = new_text
+        if self._editing_index is None and self._selected:
+            self._selected = set()
+            self._anchor = None
+            self._cursor = None
+            self._last_selected = frozenset()
+        self._redraw()
 
     # When Shift is held, numpad navigation keys report as KP_Up/KP_Down/etc.
     # instead of KP_8/KP_2/etc. Map them back to the digit they represent.
@@ -888,18 +958,20 @@ class StackWindow:
         # Treat unambiguous Win-shifted-numpad hits as Shift (the bit was stripped by OS).
         _shift = _shift_bit or _win_kp is not None
         if digit is not None:
-            if digit < len(self._tasks):
+            visible = self._visible_indices or list(range(len(self._tasks)))
+            if digit < len(visible):
+                real_idx = visible[digit]
                 self._save_desc()
                 if _shift:  # Shift held: extend from anchor
                     if self._anchor is None:
-                        self._anchor = digit
-                    self._cursor = digit
+                        self._anchor = real_idx
+                    self._cursor = real_idx
                     lo, hi = min(self._anchor, self._cursor), max(self._anchor, self._cursor)
                     self._selected = set(range(lo, hi + 1))
                 else:
-                    self._anchor = digit
-                    self._cursor = digit
-                    self._selected = {digit}
+                    self._anchor = real_idx
+                    self._cursor = real_idx
+                    self._selected = {real_idx}
                 self._canvas.focus_set()
                 self._redraw()
             return
@@ -914,28 +986,39 @@ class StackWindow:
             self._entry.delete(0, tk.END)
             self._entry.focus_set()
             self._entry.insert(tk.END, event.char)
+            self._filter_text = self._entry.get()
+            if self._selected:
+                self._selected = set()
+                self._anchor = None
+                self._cursor = None
+                self._last_selected = frozenset()
+            self._redraw()
             return
 
         if event.keysym in ("Up", "Down"):
             self._save_desc()
             delta = -1 if event.keysym == "Up" else 1
+            visible = self._visible_indices or list(range(len(self._tasks)))
+            if not visible:
+                return
             if event.state & 0x0001:  # Shift: move cursor, keep anchor fixed
                 if self._anchor is None:
-                    # Nothing selected yet — pick an edge to anchor on
-                    self._anchor = 0 if event.keysym == "Down" else len(self._tasks) - 1
+                    self._anchor = visible[0] if event.keysym == "Down" else visible[-1]
                     self._cursor = self._anchor
                 cursor_pos = self._cursor if self._cursor is not None else self._anchor
-                new_cursor = max(0, min(len(self._tasks) - 1, cursor_pos + delta))
-                self._cursor = new_cursor
+                cur_v = visible.index(cursor_pos) if cursor_pos in visible else 0
+                new_v = max(0, min(len(visible) - 1, cur_v + delta))
+                self._cursor = visible[new_v]
                 lo, hi = min(self._anchor, self._cursor), max(self._anchor, self._cursor)
                 self._selected = set(range(lo, hi + 1))
             else:
-                # Plain Up/Down: move single selection
                 if not self._selected:
-                    pos = 0 if event.keysym == "Down" else len(self._tasks) - 1
+                    pos = visible[0] if event.keysym == "Down" else visible[-1]
                 else:
                     cur = self._cursor if self._cursor is not None else min(self._selected)
-                    pos = max(0, min(len(self._tasks) - 1, cur + delta))
+                    cur_v = visible.index(cur) if cur in visible else 0
+                    new_v = max(0, min(len(visible) - 1, cur_v + delta))
+                    pos = visible[new_v]
                 self._anchor = pos
                 self._cursor = pos
                 self._selected = {pos}
@@ -1097,7 +1180,10 @@ class StackWindow:
     # ------------------------------------------------------------------
 
     def _row_at(self, y: int) -> int:
-        return max(0, min(len(self._tasks) - 1, y // _ROW_HEIGHT))
+        if not self._visible_indices:
+            return max(0, min(len(self._tasks) - 1, y // _ROW_HEIGHT))
+        row = max(0, min(len(self._visible_indices) - 1, y // _ROW_HEIGHT))
+        return self._visible_indices[row]
 
     def _drag_press(self, event: tk.Event) -> None:
         if not self._tasks:
