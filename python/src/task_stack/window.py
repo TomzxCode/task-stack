@@ -1138,6 +1138,15 @@ class StackWindow:
             min_deleted = min(self._selected)
             tasks = st.remove_many(self._selected)
             self._tasks = tasks
+            # Hide the description panel and reset the cached selection so
+            # that the next _redraw repopulates the entry and description
+            # from the newly selected task. Otherwise, if the new selection
+            # happens to share the same index as the deleted task, the stale
+            # title/description would remain visible and could be written
+            # back onto the replacement task on focus-out.
+            self._hide_desc_panel()
+            self._last_selected = frozenset()
+            self._entry.delete(0, tk.END)
             if tasks:
                 next_sel = min(min_deleted, len(tasks) - 1)
                 self._selected = {next_sel}
