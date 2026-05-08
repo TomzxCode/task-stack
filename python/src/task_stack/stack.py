@@ -10,7 +10,7 @@ import yaml
 STACK_FILE = Path.home() / ".task-stack.yaml"
 _TMP = STACK_FILE.with_suffix(".yaml.tmp")
 HISTORY_FILE = Path.home() / ".task-stack.history.yaml"
-_HISTORY_TMP = HISTORY_FILE.with_suffix(".history.yaml.tmp")
+_HISTORY_TMP = HISTORY_FILE.with_suffix(".yaml.tmp")
 
 
 @dataclass
@@ -89,7 +89,7 @@ class Task:
         raw_duration = d.get("duration")
         try:
             duration = float(raw_duration) if raw_duration is not None else 0.0
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             duration = 0.0
 
         return Task(
@@ -293,13 +293,12 @@ def reorder(from_idx: int, to_idx: int) -> list[Task]:
     active = _load_active()
     if from_idx == to_idx or not (0 <= from_idx < len(active)) or not (0 <= to_idx < len(active)):
         return active
-    if from_idx == 0 and to_idx != 0:
-        active[0].end_current_stint(now)
-    elif to_idx == 0 and from_idx != 0:
+    head_changes = from_idx == 0 or to_idx == 0
+    if head_changes:
         active[0].end_current_stint(now)
     task = active.pop(from_idx)
     active.insert(to_idx, task)
-    if to_idx == 0:
+    if head_changes:
         active[0].mark_current(now)
     return _commit(active)
 

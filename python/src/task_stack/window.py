@@ -1181,8 +1181,8 @@ class StackWindow:
 
         rows = [
             ("Typing", "Focus entry and type"),
-            ("Enter", "Add task to bottom"),
-            ("Shift+Enter", "Add task to top"),
+            ("Enter", "Add task to top  /  Save edit"),
+            ("Shift+Enter", "Insert task after current"),
             ("Home", "Add task to top  /  Promote selected to top"),
             ("End", "Add task to bottom  /  Send selected to bottom"),
             ("0-9", "Select task by index"),

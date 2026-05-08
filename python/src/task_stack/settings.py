@@ -28,7 +28,7 @@ class WindowGeometry:
                 x=int(d["x"]),
                 y=int(d["y"]),
             )
-        except KeyError, TypeError, ValueError:
+        except (KeyError, TypeError, ValueError):
             return None
 
     def to_geometry_string(self) -> str:
@@ -59,7 +59,7 @@ class IconThreshold:
                 if len(hex_str) == 6:
                     r, g, b = int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16)
                     return IconThreshold(min_count=mc, color=(r, g, b))
-        except KeyError, TypeError, ValueError:
+        except (KeyError, TypeError, ValueError):
             pass
         return None
 
