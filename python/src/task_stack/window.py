@@ -972,15 +972,15 @@ class StackWindow:
     def _on_entry_key_release(self, event: tk.Event) -> None:
         if event.keysym in self._FILTER_IGNORED_KEYSYMS:
             return
+        # When a row is selected (explicit edit mode or implicit edit-via-
+        # selection), the entry contents are the task's title being edited,
+        # not a filter query — don't filter or clear the selection.
+        if self._editing_index is not None or self._selected:
+            return
         new_text = self._entry.get()
-        if new_text == self._filter_text and self._editing_index is None:
+        if new_text == self._filter_text:
             return
         self._filter_text = new_text
-        if self._editing_index is None and self._selected:
-            self._selected = set()
-            self._anchor = None
-            self._cursor = None
-            self._last_selected = frozenset()
         self._redraw()
 
     # When Shift is held, numpad navigation keys report as KP_Up/KP_Down/etc.
@@ -1011,9 +1011,8 @@ class StackWindow:
 
         if event.keysym in ("Return", "KP_Enter"):
             if len(self._selected) == 1:
-                self._entry.focus_set()
-                self._entry.select_range(0, tk.END)
-                self._entry.icursor(tk.END)
+                (sole,) = self._selected
+                self._begin_edit(sole)
             return
 
         # Digit keys select a row. Try keycode first (immune to Shift on main row),
@@ -1051,19 +1050,29 @@ class StackWindow:
             self._show_help()
             return
 
-        # Printable character: redirect to entry and let the user type
+        # Printable character: redirect to entry and let the user type.
+        # If a row is selected, treat this as the start of an edit: the entry
+        # already holds the task title pre-selected, so replace it with the
+        # typed char and enter edit mode. Otherwise start a fresh filter.
         if event.char and event.char.isprintable():
-            self._cancel_edit()
-            self._entry.delete(0, tk.END)
-            self._entry.focus_set()
-            self._entry.insert(tk.END, event.char)
-            self._filter_text = self._entry.get()
-            if self._selected:
-                self._selected = set()
-                self._anchor = None
-                self._cursor = None
-                self._last_selected = frozenset()
-            self._redraw()
+            if len(self._selected) == 1:
+                (sole,) = self._selected
+                self._begin_edit(sole)
+                self._entry.delete(0, tk.END)
+                self._entry.insert(tk.END, event.char)
+                self._entry.icursor(tk.END)
+            else:
+                self._cancel_edit()
+                self._entry.delete(0, tk.END)
+                self._entry.focus_set()
+                self._entry.insert(tk.END, event.char)
+                self._filter_text = self._entry.get()
+                if self._selected:
+                    self._selected = set()
+                    self._anchor = None
+                    self._cursor = None
+                    self._last_selected = frozenset()
+                self._redraw()
             return
 
         if event.keysym in ("Up", "Down"):
