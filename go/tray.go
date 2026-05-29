@@ -2,61 +2,76 @@ package main
 
 import "fyne.io/fyne/v2"
 
-// trayApp is a local duck-type interface matching the concrete fyne app methods
-// for system tray support (present on desktop platforms).
-type trayApp interface {
+// trayCapable is the subset of the desktop Fyne app that supports a system
+// tray. It is implemented by the concrete app on desktop platforms.
+type trayCapable interface {
 	SetSystemTrayMenu(*fyne.Menu)
 	SetSystemTrayIcon(fyne.Resource)
-	SetSystemTrayWindow(fyne.Window)
 }
 
-func setupTray() {
-	ta, ok := fyneApp.(trayApp)
+// TrayApp owns the system tray icon and menu, mirroring the Python TrayApp.
+type TrayApp struct {
+	app fyne.App
+
+	hotkeyLabel string
+	onOpen      func()
+	onPop       func()
+	onHelp      func()
+	onQuit      func()
+}
+
+func NewTrayApp(app fyne.App, hotkeyLabel string, onOpen, onPop, onHelp, onQuit func()) *TrayApp {
+	return &TrayApp{
+		app:         app,
+		hotkeyLabel: hotkeyLabel,
+		onOpen:      onOpen,
+		onPop:       onPop,
+		onHelp:      onHelp,
+		onQuit:      onQuit,
+	}
+}
+
+func (t *TrayApp) Start() {
+	tasks := Load()
+	t.Update(tasks)
+}
+
+func (t *TrayApp) Update(tasks []Task) {
+	ta, ok := t.app.(trayCapable)
 	if !ok {
 		return
 	}
-	ta.SetSystemTrayWindow(fyneWin)
-	updateTray(tasks)
+	thresholds := LoadSettings().ResolvedIconThresholds()
+	ta.SetSystemTrayIcon(MakeIconResource(len(tasks), thresholds))
+	ta.SetSystemTrayMenu(t.buildMenu(tasks))
 }
 
-func updateTray(t []Task) {
-	ta, ok := fyneApp.(trayApp)
-	if !ok {
-		return
+func (t *TrayApp) buildMenu(tasks []Task) *fyne.Menu {
+	currentLabel := "No tasks"
+	if len(tasks) > 0 {
+		currentLabel = tasks[0].Text
+	}
+	openLabel := "Open Stack"
+	if t.hotkeyLabel != "" {
+		openLabel = "Open Stack (" + t.hotkeyLabel + ")"
 	}
 
-	label := "No tasks"
-	if len(t) > 0 {
-		label = t[0].Text
-	}
+	currentItem := fyne.NewMenuItem(currentLabel, nil)
+	currentItem.Disabled = true
 
-	items := []*fyne.MenuItem{
-		{Label: label, Disabled: true},
+	popItem := fyne.NewMenuItem("Mark Done (pop)", t.onPop)
+	popItem.Disabled = len(tasks) == 0
+
+	helpItem := fyne.NewMenuItem("Keyboard Shortcuts", t.onHelp)
+	helpItem.Disabled = t.onHelp == nil
+
+	return fyne.NewMenu("",
+		currentItem,
 		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("Open Stack", func() {
-			fyneWin.Show()
-			fyneWin.RequestFocus()
-		}),
-	}
-
-	if len(t) > 0 {
-		items = append(items, fyne.NewMenuItem("Mark Done", func() {
-			mu.Lock()
-			tasks, _ = Pop(tasks)
-			mu.Unlock()
-			saveAndRefresh()
-		}))
-	}
-
-	items = append(items,
+		fyne.NewMenuItem(openLabel, t.onOpen),
+		popItem,
 		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("Settings", func() {
-			fyneWin.Show()
-			showSettings(fyneWin)
-		}),
-		fyne.NewMenuItem("Quit", func() { fyneApp.Quit() }),
+		helpItem,
+		fyne.NewMenuItem("Quit", t.onQuit),
 	)
-
-	ta.SetSystemTrayMenu(fyne.NewMenu("", items...))
-	ta.SetSystemTrayIcon(makeIconFyne(len(t) > 0))
 }

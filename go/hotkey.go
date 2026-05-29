@@ -7,65 +7,69 @@ import (
 	"golang.design/x/hotkey"
 )
 
-var (
-	hotkeyConfigCh = make(chan string, 1)
-	hotkeyMu       sync.Mutex
-	currentHK      *hotkey.Hotkey
-	currentDoneCh  chan struct{}
-)
+// HotkeyListener registers a global hotkey and invokes a callback when it
+// fires. The registered hotkey can be replaced at runtime via Apply.
+type HotkeyListener struct {
+	callback func()
 
-// startHotkey registers the global hotkey from config and re-registers whenever
-// hotkeyConfigCh receives a new shortcut string.
-func startHotkey(notifyCh chan<- struct{}) {
-	cfg := LoadConfig()
-	applyHotkey(cfg.Hotkey, notifyCh)
-	for newStr := range hotkeyConfigCh {
-		applyHotkey(newStr, notifyCh)
-	}
+	mu     sync.Mutex
+	hk     *hotkey.Hotkey
+	doneCh chan struct{}
 }
 
-func applyHotkey(s string, notifyCh chan<- struct{}) {
-	mods, key, err := parseHotkey(s)
-	if err != nil {
-		log.Printf("invalid hotkey %q: %v", s, err)
-		return
-	}
+func NewHotkeyListener(callback func()) *HotkeyListener {
+	return &HotkeyListener{callback: callback}
+}
 
-	// Stop previous listener goroutine and unregister old key.
-	hotkeyMu.Lock()
-	if currentDoneCh != nil {
-		close(currentDoneCh)
-		currentDoneCh = nil
+// Apply registers the given spec, replacing any previously registered hotkey.
+func (l *HotkeyListener) Apply(spec HotkeySpec) {
+	l.mu.Lock()
+	if l.doneCh != nil {
+		close(l.doneCh)
+		l.doneCh = nil
 	}
-	if currentHK != nil {
-		currentHK.Unregister()
-		currentHK = nil
+	if l.hk != nil {
+		_ = l.hk.Unregister()
+		l.hk = nil
 	}
-	hotkeyMu.Unlock()
+	l.mu.Unlock()
 
-	hk := hotkey.New(mods, key)
+	hk := hotkey.New(spec.Mods, spec.Key)
 	if err := hk.Register(); err != nil {
-		log.Printf("hotkey register %q: %v", s, err)
+		log.Printf("hotkey register %q: %v", spec.Pretty, err)
 		return
 	}
 
-	doneCh := make(chan struct{})
-	hotkeyMu.Lock()
-	currentHK = hk
-	currentDoneCh = doneCh
-	hotkeyMu.Unlock()
+	done := make(chan struct{})
+	l.mu.Lock()
+	l.hk = hk
+	l.doneCh = done
+	l.mu.Unlock()
 
 	go func() {
 		for {
 			select {
 			case <-hk.Keydown():
-				select {
-				case notifyCh <- struct{}{}:
-				default:
+				if l.callback != nil {
+					l.callback()
 				}
-			case <-doneCh:
+			case <-done:
 				return
 			}
 		}
 	}()
+}
+
+// Stop unregisters the current hotkey and stops the listener goroutine.
+func (l *HotkeyListener) Stop() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.doneCh != nil {
+		close(l.doneCh)
+		l.doneCh = nil
+	}
+	if l.hk != nil {
+		_ = l.hk.Unregister()
+		l.hk = nil
+	}
 }

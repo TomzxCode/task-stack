@@ -8,18 +8,16 @@ import (
 	"golang.design/x/hotkey"
 )
 
-const hotkeyDefault = "cmd+shift+t"
-
-func modFromString(s string) (hotkey.Modifier, error) {
-	switch s {
+func modFromString(canonical string) (hotkey.Modifier, error) {
+	switch canonical {
 	case "ctrl":
 		return hotkey.ModCtrl, nil
 	case "shift":
 		return hotkey.ModShift, nil
-	case "alt", "option":
+	case "alt":
 		return hotkey.ModOption, nil
-	case "cmd", "command":
+	case "cmd":
 		return hotkey.ModCmd, nil
 	}
-	return 0, fmt.Errorf("unknown modifier %q — use ctrl, shift, alt, or cmd", s)
+	return 0, fmt.Errorf("unknown modifier %q", canonical)
 }
