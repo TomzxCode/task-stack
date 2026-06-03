@@ -1,0 +1,14 @@
+{
+  "name": "task-stack",
+  "version": "0.1.0",
+  "description": "A persistent task-stack tray app (Tauri)",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

@@ -1,0 +1,239 @@
+:root {
+  --font-family: system-ui, sans-serif;
+  --font-size: 11px;
+
+  --bg: #ffffff;
+  --bg-frame: #f0f0f0;
+  --selected-bg: #d0e4ff;
+  --fg: #111111;
+  --fg-dim: #444444;
+  --fg-muted: #888888;
+  --entry-bg: #ffffff;
+  --entry-fg: #111111;
+  --entry-border: #aaaaaa;
+  --entry-border-active: #4a90e2;
+  --drag-handle: #aaaaaa;
+  --btn-bg: #4a90e2;
+  --btn-fg: #ffffff;
+  --btn-active-bg: #357abd;
+  --link-fg: #1a6ed8;
+}
+
+body.dark {
+  --bg: #1e1e1e;
+  --bg-frame: #2d2d2d;
+  --selected-bg: #1a3a5c;
+  --fg: #e0e0e0;
+  --fg-dim: #b0b0b0;
+  --fg-muted: #707070;
+  --entry-bg: #3c3c3c;
+  --entry-fg: #e0e0e0;
+  --entry-border: #555555;
+  --entry-border-active: #4a90e2;
+  --drag-handle: #666666;
+  --btn-bg: #2a6099;
+  --btn-fg: #e0e0e0;
+  --btn-active-bg: #1f4d7a;
+  --link-fg: #6ea8fe;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-family);
+  font-size: var(--font-size);
+  background: var(--bg-frame);
+  color: var(--fg);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+#top {
+  padding: 6px 8px;
+}
+
+#entry {
+  width: 100%;
+  padding: 5px 6px;
+  font: inherit;
+  color: var(--entry-fg);
+  background: var(--entry-bg);
+  border: 1px solid var(--entry-border);
+  border-radius: 2px;
+  outline: none;
+}
+#entry:focus {
+  border-color: var(--entry-border-active);
+}
+
+#list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  background: var(--bg);
+  margin: 0 8px;
+  outline: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+  white-space: nowrap;
+  color: var(--fg);
+  cursor: default;
+}
+.row.selected {
+  background: var(--selected-bg);
+}
+.row.current .text {
+  font-weight: bold;
+}
+
+.handle {
+  width: 14px;
+  flex: 0 0 14px;
+  color: var(--drag-handle);
+  line-height: 0;
+  cursor: grab;
+}
+.handle svg {
+  display: block;
+}
+
+.idx {
+  flex: 0 0 auto;
+  min-width: 16px;
+  color: var(--fg-muted);
+  text-align: left;
+  margin-right: 4px;
+}
+.indicator {
+  flex: 0 0 auto;
+  width: 20px;
+  text-align: center;
+}
+.note {
+  flex: 0 0 auto;
+  width: 18px;
+  text-align: center;
+}
+.text {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.col {
+  flex: 0 0 auto;
+  text-align: right;
+  margin-left: 8px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.row.current .col {
+  color: var(--fg-dim);
+}
+.col.exec {
+  min-width: 30px;
+}
+.col.started,
+.col.last {
+  min-width: 52px;
+}
+.col.dur {
+  min-width: 58px;
+}
+
+.empty {
+  text-align: center;
+  color: var(--fg-muted);
+  padding: 8px;
+}
+
+#desc-panel {
+  padding: 4px 8px 8px 8px;
+}
+#desc {
+  width: 100%;
+  height: 80px;
+  resize: none;
+  font: inherit;
+  color: var(--entry-fg);
+  background: var(--entry-bg);
+  border: 1px solid var(--entry-border);
+  border-radius: 2px;
+  outline: none;
+  padding: 4px 6px;
+}
+#desc:focus {
+  border-color: var(--entry-border-active);
+}
+#desc.placeholder {
+  color: var(--fg-muted);
+}
+
+.hidden {
+  display: none !important;
+}
+
+#help-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#help-dialog {
+  background: var(--bg-frame);
+  color: var(--fg);
+  padding: 16px 20px;
+  border-radius: 6px;
+  min-width: 320px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+#help-dialog h2 {
+  margin: 0 0 10px 0;
+  font-size: 1.3em;
+}
+#help-table {
+  border-collapse: collapse;
+  margin-bottom: 12px;
+}
+#help-table td {
+  padding: 2px 16px 2px 0;
+  vertical-align: top;
+}
+#help-table td.key {
+  font-family: ui-monospace, monospace;
+  font-weight: bold;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+#help-close {
+  display: block;
+  margin: 0 auto;
+  padding: 5px 14px;
+  border: none;
+  border-radius: 3px;
+  color: var(--btn-fg);
+  background: var(--btn-bg);
+  cursor: pointer;
+  font: inherit;
+}
+#help-close:hover {
+  background: var(--btn-active-bg);
+}

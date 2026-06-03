@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Task Stack</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="top">
+        <input
+          id="entry"
+          type="text"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
+          placeholder="Type a task and press Enter…"
+        />
+      </div>
+
+      <div id="list" tabindex="0"></div>
+
+      <div id="desc-panel" class="hidden">
+        <textarea id="desc" spellcheck="false"></textarea>
+      </div>
+    </div>
+
+    <div id="help-overlay" class="hidden">
+      <div id="help-dialog">
+        <h2>Keyboard Shortcuts</h2>
+        <table id="help-table"></table>
+        <button id="help-close">Close</button>
+      </div>
+    </div>
+
+    <script src="main.js"></script>
+  </body>
+</html>
