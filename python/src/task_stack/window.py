@@ -348,12 +348,18 @@ class StackWindow:
         self._font_obj_normal = tkFont.Font(family=ff, size=fs)
         self._font_obj_current = tkFont.Font(family=ff, size=fs, weight="bold")
         f = self._font_obj_normal
-        # measure widest representative strings + small padding
-        self._dur_col_w = f.measure("00h 00m") + 8
-        self._ts_col_w = f.measure("00m ago") + 8
-        self._lc_col_w = f.measure("00m ago") + 8
+        # minimum widths so columns don't collapse when data is short/empty
+        self._dur_col_min_w = f.measure("00m") + 8
+        self._ts_col_min_w = f.measure("00m") + 8
+        self._lc_col_min_w = f.measure("00m") + 8
         self._idx_col_w = f.measure("999") + 4
-        self._exec_col_w = f.measure("×99") + 4
+        self._exec_col_min_w = f.measure("×9") + 12
+
+    def _measured_col_w(self, texts: list[str], minimum: int, pad: int) -> int:
+        """Width to fit the widest of ``texts`` (plus padding), clamped to ``minimum``."""
+        f = self._font_obj_normal
+        widest = max((f.measure(s) for s in texts), default=0)
+        return max(minimum, widest + pad)
 
     def _truncate(self, text: str, max_px: int, is_current: bool) -> str:
         font = self._font_obj_current if is_current else self._font_obj_normal
@@ -626,11 +632,6 @@ class StackWindow:
             width = int(c.cget("width"))
         right_pad = 8
         gap = 8
-        dur_x = width - right_pad
-        lc_x = dur_x - self._dur_col_w - gap
-        ts_x = lc_x - self._lc_col_w - gap
-        exec_x = ts_x - self._ts_col_w - gap
-        text_right = exec_x - self._exec_col_w - gap
 
         if self._filter_text:
             self._visible_indices = [
@@ -639,6 +640,30 @@ class StackWindow:
             ]
         else:
             self._visible_indices = list(range(len(self._tasks)))
+
+        # Size columns to the widest value currently visible.
+        dur_texts: list[str] = []
+        ts_texts: list[str] = []
+        lc_texts: list[str] = []
+        exec_texts: list[str] = []
+        for i in self._visible_indices:
+            task = self._tasks[i]
+            dur_seconds = task.live_duration(now) if i == 0 else task.duration
+            dur_texts.append(st.format_duration(dur_seconds))
+            ts_texts.append(st.format_timestamp(task.started_at, now))
+            lc_texts.append(st.format_timestamp(task.last_current, now))
+            exec_texts.append(f"×{task.execution_count}" if task.execution_count else "—")
+
+        dur_col_w = self._measured_col_w(dur_texts, self._dur_col_min_w, 8)
+        ts_col_w = self._measured_col_w(ts_texts, self._ts_col_min_w, 8)
+        lc_col_w = self._measured_col_w(lc_texts, self._lc_col_min_w, 8)
+        exec_col_w = self._measured_col_w(exec_texts, self._exec_col_min_w, 12)
+
+        dur_x = width - right_pad
+        lc_x = dur_x - dur_col_w - gap
+        ts_x = lc_x - lc_col_w - gap
+        exec_x = ts_x - ts_col_w - gap
+        text_right = exec_x - exec_col_w - gap
 
         for row, i in enumerate(self._visible_indices):
             task = self._tasks[i]
