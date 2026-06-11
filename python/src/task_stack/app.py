@@ -334,11 +334,11 @@ class AppCoordinator:
                 self._window_refresh()
                 self._window_show()
             elif msg == "toggle":
-                if self._window_is_visible():
-                    self._window_hide()
-                else:
-                    self._window_refresh()
-                    self._window_show()
+                # If the window is already open, bring it to the front rather
+                # than hiding it. `_window_show` re-asserts topmost briefly and
+                # forces focus, which raises an already-visible window too.
+                self._window_refresh()
+                self._window_show()
             elif msg == "stack_changed":
                 tasks = st.load()
                 if self._tray:

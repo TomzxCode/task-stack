@@ -319,7 +319,6 @@ class StackWindow:
         root.resizable(True, True)
         root.minsize(320, 160)
         root.protocol("WM_DELETE_WINDOW", self.hide)
-        root.attributes("-topmost", True)
 
         self._settings = cfg.load()
         self._save_after_id: str | None = None
@@ -460,9 +459,14 @@ class StackWindow:
     def show(self) -> None:
         self.refresh()
         self.root.deiconify()
+        # Briefly assert topmost to force the window above other apps, then
+        # release it so the window behaves like a normal one afterwards (the
+        # user can switch to other apps and they won't be obscured by it).
+        self.root.attributes("-topmost", True)
         self.root.lift()
         self.root.focus_force()
         self._canvas.focus_set()
+        self.root.after_idle(lambda: self.root.attributes("-topmost", False))
 
     def hide(self) -> None:
         self._capture_geometry()
