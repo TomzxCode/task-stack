@@ -14,55 +14,83 @@ _HISTORY_TMP = HISTORY_FILE.with_suffix(".yaml.tmp")
 
 
 @dataclass
+class Event:
+    started_at: datetime
+    ended_at: datetime | None = field(default=None)
+
+    def to_dict(self) -> dict:
+        d: dict = {"started_at": self.started_at.isoformat()}
+        if self.ended_at is not None:
+            d["ended_at"] = self.ended_at.isoformat()
+        return d
+
+    @staticmethod
+    def from_dict(d: dict) -> "Event":
+        def _parse(v: object) -> datetime | None:
+            return datetime.fromisoformat(v) if isinstance(v, str) and v else None
+
+        started = _parse(d.get("started_at"))
+        if started is None:
+            raise ValueError("event missing started_at")
+        return Event(
+            started_at=started,
+            ended_at=_parse(d.get("ended_at")),
+        )
+
+
+@dataclass
 class Task:
     text: str
     created_at: datetime | None = field(default=None)
-    started_at: datetime | None = field(default=None)
-    last_current: datetime | None = field(default=None)
-    duration: float = field(default=0.0)
     deleted_at: datetime | None = field(default=None)
     description: str = field(default="")
     execution_count: int = field(default=0)
+    events: list[Event] = field(default_factory=list)
 
     @property
     def is_deleted(self) -> bool:
         return self.deleted_at is not None
 
+    @property
+    def started_at(self) -> datetime | None:
+        return self.events[0].started_at if self.events else None
+
+    @property
+    def last_current(self) -> datetime | None:
+        if not self.events:
+            return None
+        last = self.events[-1]
+        return last.ended_at if last.ended_at is not None else last.started_at
+
+    @property
+    def duration(self) -> float:
+        total = 0.0
+        for e in self.events:
+            if e.ended_at is not None:
+                elapsed = (e.ended_at - e.started_at).total_seconds()
+                if elapsed > 0:
+                    total += elapsed
+        return total
+
     def mark_current(self, now: datetime | None = None) -> None:
-        """Mark this task as the active one (position 0)."""
         if now is None:
             now = datetime.now().astimezone()
-        if self.started_at is None:
-            self.started_at = now
-        self.last_current = now
         self.execution_count += 1
+        self.events.append(Event(started_at=now))
 
     def end_current_stint(self, now: datetime | None = None) -> None:
-        """Accumulate the live stint into ``duration``.
-
-        Adds ``now - last_current`` to ``duration``. ``last_current`` is left
-        unchanged so it continues to record when the task was most recently
-        current.
-        """
-        if self.last_current is None:
+        if not self.events or self.events[-1].ended_at is not None:
             return
         if now is None:
             now = datetime.now().astimezone()
-        elapsed = (now - self.last_current).total_seconds()
-        if elapsed > 0:
-            self.duration += elapsed
+        self.events[-1].ended_at = now
 
     def live_duration(self, now: datetime | None = None) -> float:
-        """Return cumulative active seconds plus the live stint since ``last_current``.
-
-        Use this for the task at position 0 where ``last_current`` represents
-        the start of an in-progress stint not yet folded into ``duration``.
-        """
         total = self.duration
-        if self.last_current is not None:
+        if self.events and self.events[-1].ended_at is None:
             if now is None:
                 now = datetime.now().astimezone()
-            elapsed = (now - self.last_current).total_seconds()
+            elapsed = (now - self.events[-1].started_at).total_seconds()
             if elapsed > 0:
                 total += elapsed
         return total
@@ -73,16 +101,14 @@ class Task:
         }
         if self.created_at is not None:
             d["created_at"] = self.created_at.isoformat()
-        if self.started_at is not None:
-            d["started_at"] = self.started_at.isoformat()
-        d["last_current"] = self.last_current.isoformat() if self.last_current else None
-        d["duration"] = round(self.duration, 3)
         if self.deleted_at is not None:
             d["deleted_at"] = self.deleted_at.isoformat()
         if self.description:
             d["description"] = self.description
         if self.execution_count:
             d["execution_count"] = self.execution_count
+        if self.events:
+            d["events"] = [e.to_dict() for e in self.events]
         return d
 
     @staticmethod
@@ -90,21 +116,32 @@ class Task:
         def _parse(v: object) -> datetime | None:
             return datetime.fromisoformat(v) if isinstance(v, str) and v else None
 
-        raw_duration = d.get("duration")
-        try:
-            duration = float(raw_duration) if raw_duration is not None else 0.0
-        except (TypeError, ValueError):
-            duration = 0.0
+        raw_events = d.get("events")
+        events: list[Event] = []
+        if isinstance(raw_events, list):
+            for ev in raw_events:
+                if isinstance(ev, dict):
+                    try:
+                        events.append(Event.from_dict(ev))
+                    except Exception:
+                        pass
+
+        if not events:
+            legacy_started = _parse(d.get("started_at"))
+            legacy_last_current = _parse(d.get("last_current"))
+            if legacy_started is not None:
+                events.append(Event(
+                    started_at=legacy_started,
+                    ended_at=legacy_last_current,
+                ))
 
         return Task(
             text=d["text"],
             created_at=_parse(d.get("created_at")),
-            started_at=_parse(d.get("started_at")),
-            last_current=_parse(d.get("last_current")),
-            duration=duration,
             deleted_at=_parse(d.get("deleted_at")),
             description=d.get("description") or "",
             execution_count=int(d.get("execution_count") or 0),
+            events=events,
         )
 
 
@@ -122,11 +159,11 @@ def _parse_tasks(data: object) -> list[Task]:
 
 
 def _migrate_durations(tasks: list[Task]) -> bool:
-    """Backfill ``duration`` for legacy entries that lack it.
+    """Backfill events for legacy entries that lack them.
 
-    For non-row-0 (or deleted) tasks that have ``last_current`` and
-    ``started_at`` but ``duration == 0``, treat ``last_current - started_at``
-    as the cumulative active duration. ``last_current`` itself is preserved.
+    For non-row-0 (or deleted) tasks that have no events but have legacy
+    ``started_at`` / ``last_current`` stored in the file, a single event is
+    synthesized from those timestamps.
 
     Returns True if any task was modified.
     """
@@ -138,13 +175,10 @@ def _migrate_durations(tasks: list[Task]) -> bool:
             active_idx += 1
         if is_row_zero_active:
             continue
-        if (
-            t.duration == 0.0
-            and t.last_current is not None
-            and t.started_at is not None
-            and t.last_current > t.started_at
-        ):
-            t.duration = (t.last_current - t.started_at).total_seconds()
+        if t.events:
+            continue
+        if t.started_at is not None:
+            t.events = [Event(started_at=t.started_at, ended_at=t.last_current)]
             changed = True
     return changed
 
@@ -154,7 +188,7 @@ def _load_active() -> list[Task]:
 
     Handles two legacy migrations on first encounter:
     - inline deleted tasks: moved to the history file
-    - missing duration fields: backfilled from started_at/last_current
+    - missing events: synthesized from legacy started_at/last_current
     """
     if not STACK_FILE.exists():
         return []
@@ -369,7 +403,7 @@ def update_text(idx: int, text: str) -> list[Task]:
     """Update the text of the active task at ``idx`` in place.
 
     Empty/whitespace text is rejected (returns the active list unchanged).
-    Other timestamps (created_at / started_at / last_current) are preserved.
+    Other timestamps (created_at) are preserved.
     """
     new_text = text.strip()
     if not new_text:

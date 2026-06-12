@@ -18,8 +18,9 @@ easy to inspect or back up.
   on first run.
 - Soft-deletes: removed/popped tasks are kept in the YAML file with a
   `deleted_at` timestamp, so you have a history.
-- Records `created_at`, `started_at` (first time the task became current), and
-  `last_current` (most recent time it was at the top) for each task.
+- Tracks session events per task: each time a task becomes active, an event
+  records `started_at` and `ended_at`, from which `started_at`, `last_current`,
+  and `duration` are derived.
 
 ## Requirements
 
@@ -100,7 +101,8 @@ The app stores everything in your home directory:
 
 | File | Purpose |
 | --- | --- |
-| `~/.task-stack.yaml` | Active stack and soft-deleted history (YAML list of tasks). |
+| `~/.task-stack.yaml` | Active tasks and soft-deleted history (YAML list of tasks). |
+| `~/.task-stack.history.yaml` | Soft-deleted tasks (moved here from the main file on migration). |
 | `~/.task-stack.settings.yaml` | Window geometry and hotkey configuration (YAML). |
 
 ### Customize the hotkey
@@ -135,13 +137,15 @@ Each task in `~/.task-stack.yaml` is a YAML mapping. Example:
 ```yaml
 - text: Write README
   created_at: '2026-05-01T15:00:00+00:00'
-  started_at: '2026-05-01T15:00:00+00:00'
-  last_current: '2026-05-01T15:30:00+00:00'
+  events:
+    - started_at: '2026-05-01T15:00:00+00:00'
+      ended_at: '2026-05-01T15:30:00+00:00'
 - text: Old task
   created_at: '2026-04-30T10:00:00+00:00'
-  started_at: '2026-04-30T10:00:00+00:00'
-  last_current: '2026-04-30T11:15:00+00:00'
   deleted_at: '2026-04-30T12:00:00+00:00'
+  events:
+    - started_at: '2026-04-30T10:00:00+00:00'
+      ended_at: '2026-04-30T11:15:00+00:00'
 ```
 
 Active tasks come first (in stack order); soft-deleted tasks are appended at

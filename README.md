@@ -15,7 +15,7 @@ window where you can add, reorder, promote, and remove tasks.
 - Configurable icon color thresholds
 - Persists window size and position across launches
 - Soft-deletes: removed tasks are kept with a `deleted_at` timestamp
-- Records `created_at`, `started_at`, `last_current`, and cumulative `duration`
+- Records session events per task, tracking when each task enters and leaves the active position
 
 ## Quick Start
 
