@@ -441,6 +441,10 @@ class StackWindow:
         self._desc_text.bind("<FocusIn>", self._on_desc_focus_in)
         self._desc_text.bind("<Escape>", self._on_desc_escape)
         self._desc_text.bind("<KeyRelease>", self._on_desc_key_release)
+        # The Text widget's default class binding inserts a newline on <Return>
+        # but not on <KP_Enter> (numpad Enter) on some platforms (notably
+        # macOS), so bind it explicitly to match <Return> behaviour.
+        self._desc_text.bind("<KP_Enter>", self._on_desc_kp_enter)
         self._desc_placeholder_active = False
         self._desc_frame.pack_forget()
 
@@ -912,6 +916,12 @@ class StackWindow:
         if self._desc_placeholder_active:
             return
         self._highlight_links()
+
+    def _on_desc_kp_enter(self, _event: tk.Event) -> str:
+        if self._desc_placeholder_active:
+            return "break"
+        self._desc_text.insert(tk.INSERT, "\n")
+        return "break"
 
     def _highlight_links(self) -> None:
         text_widget = self._desc_text
