@@ -4,7 +4,7 @@ go 1.24.7
 
 require (
 	fyne.io/fyne/v2 v2.8.1
-	golang.design/x/hotkey v0.6.1
+	golang.design/x/hotkey v0.6.4
 )
 
 require (
