@@ -3,7 +3,7 @@ module task-stack
 go 1.24.7
 
 require (
-	fyne.io/fyne/v2 v2.8.2
+	fyne.io/fyne/v2 v2.8.3
 	golang.design/x/hotkey v0.6.4
 )
 
